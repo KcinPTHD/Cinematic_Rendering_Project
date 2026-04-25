@@ -1,0 +1,37 @@
+{
+    "tasks": [
+        {
+            "type": "cppbuild",
+            "label": "C/C++: g++.exe build active file",
+            "command": "C:\\MinGW\\bin\\g++.exe",
+            "args": [
+                "-fdiagnostics-color=always",
+                "-g",
+                "${workspaceFolder}\\src\\*.cpp",
+                "C:\\OpenGL\\glad\\src\\glad.c",
+                "-o",
+                "${workspaceFolder}\\bin\\app.exe",
+
+                "-I", "C:\\OpenGL\\glfw\\include",
+                "-I", "C:\\OpenGL\\glm\\include",
+                "-I", "C:\\OpenGL\\glad\\include",
+
+                "-L", "C:\\OpenGL\\glfw\\lib-mingw-w64",
+
+                "-lglfw3dll",
+                "-lopengl32"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ],
+    "version": "2.0.0"
+}
