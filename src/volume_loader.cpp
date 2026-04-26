@@ -40,30 +40,22 @@ static std::string ensureRAW(const std::string& inputPath) {
         std::filesystem::path scriptPath =
             projectRoot / "utils" / "convert_to_raw.py";
 
-        // comando normal (vai falhar no teu caso)
+        std::filesystem::path pythonPath =
+            projectRoot / "venv" / "Scripts" / "python.exe";
+
         std::string command =
-            "python \"" + scriptPath.string() + "\" \"" +
-            inputAbs.string() + "\" \"" + outputAbs.string() + "\"";
+            "cmd /C \"\"" + pythonPath.string() +
+            "\" \"" + scriptPath.string() +
+            "\" \"" + inputAbs.string() +
+            "\" \"" + outputAbs.string() +
+            "\"\"";
 
         std::cout << "Running: " << command << std::endl;
 
         int result = system(command.c_str());
 
         if (result != 0) {
-            std::cout << "Default python failed, trying fallback...\n";
-
-            std::string fallback =
-                "\"C:\\Users\\afons\\AppData\\Local\\Programs\\Python\\Python312\\python.exe\" \"" +
-                scriptPath.string() + "\" \"" +
-                inputAbs.string() + "\" \"" + outputAbs.string() + "\"";
-
-            std::cout << "Fallback: " << fallback << std::endl;
-
-            result = system(fallback.c_str());
-
-            if (result != 0) {
-                throw std::runtime_error("Python conversion failed");
-            }
+            throw std::runtime_error("Python conversion failed");
         }
     }
 

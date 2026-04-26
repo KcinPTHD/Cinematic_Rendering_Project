@@ -62,7 +62,11 @@ Renderer::Renderer(int w, int h)
 // VOLUME → GPU
 // =====================================
 void Renderer::initVolume() {
-    Volume vol = loadVolumeAuto("../data/sub-G2106_ses-01_T1w.nii");
+
+    // caminho relativo à root do projeto (onde corres o exe)
+    std::string path = "data/sub-G2106_ses-01_T1w.nii";
+
+    Volume vol = loadVolumeAuto(path);
 
     glGenTextures(1, &volumeTex);
     glBindTexture(GL_TEXTURE_3D, volumeTex);
