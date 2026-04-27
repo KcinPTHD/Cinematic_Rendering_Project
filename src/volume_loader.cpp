@@ -66,16 +66,17 @@ static std::string ensureRAW(const std::string& inputPath) {
 // RAW LOADER
 // ======================================================
 Volume loadRAW(const std::string& path, int w, int h, int d) {
+
     std::ifstream file(path, std::ios::binary);
 
     if (!file.is_open()) {
         throw std::runtime_error("Cannot open file: " + path);
     }
 
-    size_t size = static_cast<size_t>(w) * h * d;
+    size_t size = (size_t)w * h * d;
 
-    std::vector<unsigned char> buffer(size);
-    file.read(reinterpret_cast<char*>(buffer.data()), size);
+    std::vector<float> buffer(size);
+    file.read(reinterpret_cast<char*>(buffer.data()), size * sizeof(float));
 
     if (!file) {
         throw std::runtime_error("Failed to read full volume data");
@@ -85,23 +86,7 @@ Volume loadRAW(const std::string& path, int w, int h, int d) {
     vol.width = w;
     vol.height = h;
     vol.depth = d;
-    vol.data.resize(size);
-
-    // normalização
-    for (size_t i = 0; i < size; i++) {
-        vol.data[i] = buffer[i] / 255.0f;
-    }
-
-    // DEBUG: verificar range real dos dados
-    float minV = 1.0f;
-    float maxV = 0.0f;
-
-    for (float v : vol.data) {
-        if (v < minV) minV = v;
-        if (v > maxV) maxV = v;
-    }
-
-    std::cout << "Volume range: " << minV << " -> " << maxV << std::endl;
+    vol.data = buffer;
 
     return vol;
 }

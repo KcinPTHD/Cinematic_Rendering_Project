@@ -91,7 +91,7 @@ void Renderer::initVolume() {
     glTexImage3D(
         GL_TEXTURE_3D,
         0,
-        GL_RED,
+        GL_R32F,
         vol.width,
         vol.height,
         vol.depth,
@@ -300,7 +300,15 @@ void Renderer::render() {
     // Pass volume scale to shader
     glUniform3f(
         glGetUniformLocation(raycastProgram, "volumeScale"),
-        scaleX, scaleY, scaleZ
+        scaleX,
+        scaleY,
+        scaleZ
+    );
+
+    glm::vec3 camPos = glm::inverse(view)[3];
+        glUniform3f(
+        glGetUniformLocation(raycastProgram, "cameraPos"),
+        camPos.x, camPos.y, camPos.z
     );
 
     glActiveTexture(GL_TEXTURE0);
@@ -317,6 +325,8 @@ void Renderer::render() {
     // -----------------------------
     // 2. DRAW WIREFRAME
     // -----------------------------
+    glDisable(GL_DEPTH_TEST);
+
     glUseProgram(wireProgram);
 
     glUniformMatrix4fv(
@@ -326,4 +336,6 @@ void Renderer::render() {
 
     glBindVertexArray(cubeVAO);
     glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, 0);
+
+    glEnable(GL_DEPTH_TEST);
 }

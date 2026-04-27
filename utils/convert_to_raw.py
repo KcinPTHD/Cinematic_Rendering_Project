@@ -10,12 +10,14 @@ data = img.get_fdata()
 
 print("Shape:", data.shape)
 
-# normalizar
+# NORMALIZAR 0..1 (FLOAT!)
 data = data - data.min()
 data = data / data.max()
-data = (data * 255).astype(np.uint8)
 
-# corrigir ordem dos eixos: (Z,Y,X) -> (X,Y,Z)
+# IMPORTANTE: manter float32 (não uint8!)
+data = data.astype(np.float32)
+
+# Ordem correta: (Z,Y,X) -> (X,Y,Z)
 data = np.transpose(data, (2, 1, 0))
 
 data.tofile(output_path)
