@@ -39,6 +39,12 @@ void framebuffer_size(GLFWwindow* window, int w, int h) {
     glViewport(0, 0, w, h);
 }
 
+void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    if (key == GLFW_KEY_D && action == GLFW_PRESS) {
+        renderer->toggleDebug();
+    }
+}
+
 int main() {
     glfwInit();
 
@@ -55,6 +61,7 @@ int main() {
     glfwSetCursorPosCallback(window, cursor_pos);
     glfwSetScrollCallback(window, scroll);
     glfwSetFramebufferSizeCallback(window, framebuffer_size);
+    glfwSetKeyCallback(window, key_callback);
 
     while (!glfwWindowShouldClose(window)) {
         renderer->render();

@@ -1,7 +1,6 @@
-import numpy as np
 import nibabel as nib
+import numpy as np
 import sys
-import os
 
 input_path = sys.argv[1]
 output_path = sys.argv[2]
@@ -15,6 +14,9 @@ print("Shape:", data.shape)
 data = data - data.min()
 data = data / data.max()
 data = (data * 255).astype(np.uint8)
+
+# corrigir ordem dos eixos: (Z,Y,X) -> (X,Y,Z)
+data = np.transpose(data, (2, 1, 0))
 
 data.tofile(output_path)
 

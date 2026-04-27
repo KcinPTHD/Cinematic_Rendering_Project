@@ -6,7 +6,9 @@ out vec4 FragColor;
 uniform sampler3D volumeTex;
 
 void main() {
-    float d = texture(volumeTex, texCoord).r;
+    vec3 coord = clamp(texCoord, 0.0, 1.0);
 
-    FragColor = vec4(d, d, d, 0.3); // semi transparente
+    float v = texture(volumeTex, coord).r;
+
+    FragColor = vec4(v, v, v, 1.0);
 }

@@ -87,9 +87,21 @@ Volume loadRAW(const std::string& path, int w, int h, int d) {
     vol.depth = d;
     vol.data.resize(size);
 
+    // normalização
     for (size_t i = 0; i < size; i++) {
         vol.data[i] = buffer[i] / 255.0f;
     }
+
+    // DEBUG: verificar range real dos dados
+    float minV = 1.0f;
+    float maxV = 0.0f;
+
+    for (float v : vol.data) {
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+    }
+
+    std::cout << "Volume range: " << minV << " -> " << maxV << std::endl;
 
     return vol;
 }
@@ -132,7 +144,7 @@ Volume loadVolumeAuto(const std::string& path)
 
     int w = 256;
     int h = 256;
-    int d = 176;
+    int d = 196;
 
     Volume vol = loadRAW(rawPath, w, h, d);
 

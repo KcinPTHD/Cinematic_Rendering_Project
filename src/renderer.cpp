@@ -29,6 +29,15 @@ static unsigned int compileShader(const char* path, GLenum type) {
     glShaderSource(shader, 1, &c, nullptr);
     glCompileShader(shader);
 
+    // Debug: check compilation
+    int success;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char infoLog[512];
+        glGetShaderInfoLog(shader, 512, nullptr, infoLog);
+        std::cout << "[SHADER ERROR] " << path << ": " << infoLog << std::endl;
+    }
+
     return shader;
 }
 
@@ -53,9 +62,10 @@ static unsigned int createProgram(const char* vs, const char* fs) {
 Renderer::Renderer(int w, int h)
     : width(w), height(h)
 {
+    // IMPORTANTE: initVolume() primeiro para ter as dimensões
+    initVolume();
     initCube();
     initShaders();
-    initVolume();
 }
 
 // =====================================
@@ -91,25 +101,51 @@ void Renderer::initVolume() {
         vol.data.data()
     );
 
+    glBindTexture(GL_TEXTURE_3D, volumeTex);
+
     std::cout << "Volume loaded: "
               << vol.width << "x"
               << vol.height << "x"
               << vol.depth << std::endl;
+
+    // Guardar dimensões do volume para uso no cubo
+    volumeWidth = vol.width;
+    volumeHeight = vol.height;
+    volumeDepth = vol.depth;
 }
 
 // =====================================
-// CUBE (BOUNDING BOX)
+// CUBE (BOUNDING BOX) - adapta-se às dimensões do volume
 // =====================================
 void Renderer::initCube() {
+    // Usar as dimensões reais do volume (normalizado para que o maior eixo = 1)
+    float maxDim = static_cast<float>(
+        volumeWidth > volumeHeight ? volumeWidth : volumeHeight
+    );
+    maxDim = maxDim > volumeDepth ? maxDim : static_cast<float>(volumeDepth);
+
+    float scaleX = static_cast<float>(volumeWidth) / maxDim;
+    float scaleY = static_cast<float>(volumeHeight) / maxDim;
+    float scaleZ = static_cast<float>(volumeDepth) / maxDim;
+
     float vertices[] = {
-        0,0,0,  1,0,0,  1,1,0,  0,1,0,
-        0,0,1,  1,0,1,  1,1,1,  0,1,1
+        0,0,0,     scaleX,0,0,     scaleX,scaleY,0,  0,scaleY,0,
+        0,0,scaleZ,  scaleX,0,scaleZ,  scaleX,scaleY,scaleZ,  0,scaleY,scaleZ
     };
 
     unsigned int indices[] = {
-        0,1, 1,2, 2,3, 3,0,
-        4,5, 5,6, 6,7, 7,4,
-        0,4, 1,5, 2,6, 3,7
+        // front
+        0,1,2, 2,3,0,
+        // back
+        4,5,6, 6,7,4,
+        // left
+        0,3,7, 7,4,0,
+        // right
+        1,5,6, 6,2,1,
+        // bottom
+        0,1,5, 5,4,0,
+        // top
+        3,2,6, 6,7,3
     };
 
     glGenVertexArrays(1, &cubeVAO);
@@ -140,6 +176,11 @@ void Renderer::initShaders() {
         "shaders/volume.vert",
         "shaders/volume.frag"
     );
+
+    raycastProgram = createProgram(
+        "shaders/raycast.vert",
+        "shaders/raycast.frag"
+    );
 }
 
 // =====================================
@@ -161,8 +202,24 @@ void Renderer::onZoom(float delta) {
     if (distance > 10.0f) distance = 10.0f;
 }
 
+void Renderer::toggleDebug() {
+    debugEnabled = !debugEnabled;
+    std::cout << "[DEBUG] " << (debugEnabled ? "ON" : "OFF") << std::endl;
+}
+
 glm::mat4 Renderer::getView() {
-    glm::vec3 c(0.5f);
+    // Calcular escala baseada nas dimensões do volume
+    float maxDim = static_cast<float>(
+        volumeWidth > volumeHeight ? volumeWidth : volumeHeight
+    );
+    maxDim = maxDim > volumeDepth ? maxDim : static_cast<float>(volumeDepth);
+
+    float scaleX = static_cast<float>(volumeWidth) / maxDim;
+    float scaleY = static_cast<float>(volumeHeight) / maxDim;
+    float scaleZ = static_cast<float>(volumeDepth) / maxDim;
+
+    // Centro do cubo = meio das dimensões
+    glm::vec3 c(scaleX / 2.0f, scaleY / 2.0f, scaleZ / 2.0f);
 
     glm::vec3 p;
     p.x = c.x + distance * cos(pitch) * sin(yaw);
@@ -186,25 +243,71 @@ glm::mat4 Renderer::getProj() {
 // RENDER
 // =====================================
 void Renderer::render() {
+    // Debug output (toggle com 'd')
+    if (debugEnabled) {
+        std::cout << "=== DEBUG ===" << std::endl;
+        std::cout << "Volume: " << volumeWidth << "x" << volumeHeight << "x" << volumeDepth << std::endl;
+        
+        float maxDim = static_cast<float>(
+            volumeWidth > volumeHeight ? volumeWidth : volumeHeight
+        );
+        maxDim = maxDim > volumeDepth ? maxDim : static_cast<float>(volumeDepth);
+        float scaleX = static_cast<float>(volumeWidth) / maxDim;
+        float scaleY = static_cast<float>(volumeHeight) / maxDim;
+        float scaleZ = static_cast<float>(volumeDepth) / maxDim;
+        
+        std::cout << "Cube scale: " << scaleX << "x" << scaleY << "x" << scaleZ << std::endl;
+        std::cout << "Camera: dist=" << distance << ", yaw=" << yaw << ", pitch=" << pitch << std::endl;
+        std::cout << "Center: " << (scaleX/2.0f) << ", " << (scaleY/2.0f) << ", " << (scaleZ/2.0f) << std::endl;
+        std::cout << "=============" << std::endl;
+    }
+
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glm::mat4 mvp = getProj() * getView();
+    // Calcular matrizes
+    glm::mat4 model = glm::mat4(1.0f);
+    glm::mat4 view = getView();
+    glm::mat4 proj = getProj();
+    glm::mat4 mvp = proj * view * model;
+
+    // Calcular escala para centered do cubo
+    float maxDim = static_cast<float>(
+        volumeWidth > volumeHeight ? volumeWidth : volumeHeight
+    );
+    maxDim = maxDim > volumeDepth ? maxDim : static_cast<float>(volumeDepth);
+    float scaleX = static_cast<float>(volumeWidth) / maxDim;
+    float scaleY = static_cast<float>(volumeHeight) / maxDim;
+    float scaleZ = static_cast<float>(volumeDepth) / maxDim;
 
     // -----------------------------
-    // 1. DRAW VOLUME (SIMPLE)
+    // 1. DRAW VOLUME (RAYCAST)
     // -----------------------------
-    glUseProgram(volumeProgram);
+    glUseProgram(raycastProgram);
 
     glUniformMatrix4fv(
-        glGetUniformLocation(volumeProgram, "mvp"),
-        1, GL_FALSE, &mvp[0][0]
+        glGetUniformLocation(raycastProgram, "model"),
+        1, GL_FALSE, &model[0][0]
+    );
+    glUniformMatrix4fv(
+        glGetUniformLocation(raycastProgram, "view"),
+        1, GL_FALSE, &view[0][0]
+    );
+    glUniformMatrix4fv(
+        glGetUniformLocation(raycastProgram, "proj"),
+        1, GL_FALSE, &proj[0][0]
+    );
+
+    // Pass volume scale to shader
+    glUniform3f(
+        glGetUniformLocation(raycastProgram, "volumeScale"),
+        scaleX, scaleY, scaleZ
     );
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_3D, volumeTex);
 
     glUniform1i(
-        glGetUniformLocation(volumeProgram, "volumeTex"),
+        glGetUniformLocation(raycastProgram, "volumeTex"),
         0
     );
 

@@ -11,6 +11,8 @@ public:
     void onMouseDrag(float dx, float dy);
     void onZoom(float delta);
 
+    void toggleDebug();
+
 private:
     int width, height;
 
@@ -26,11 +28,15 @@ private:
     // -----------------------------
     unsigned int wireProgram;
     unsigned int volumeProgram;
+    unsigned int raycastProgram;
 
     // -----------------------------
     // VOLUME
     // -----------------------------
     unsigned int volumeTex;
+    int volumeWidth = 0;
+    int volumeHeight = 0;
+    int volumeDepth = 0;
 
     // -----------------------------
     // CAMERA
@@ -38,6 +44,11 @@ private:
     float yaw = 0.0f;
     float pitch = 0.0f;
     float distance = 2.5f;
+
+    // -----------------------------
+    // DEBUG
+    // -----------------------------
+    bool debugEnabled = false;
 
     // -----------------------------
     // METHODS
