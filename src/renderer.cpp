@@ -100,7 +100,6 @@ void Renderer::initVolume()
         GL_TEXTURE_3D,
         0,
         GL_R32F,
-        GL_R32F,
         vol.width,
         vol.height,
         vol.depth,
@@ -269,7 +268,7 @@ void Renderer::render() {
     if (debugEnabled) {
         std::cout << "=== DEBUG ===" << std::endl;
         std::cout << "Volume: " << volumeWidth << "x" << volumeHeight << "x" << volumeDepth << std::endl;
-        
+       
         float maxDim = static_cast<float>(
             volumeWidth > volumeHeight ? volumeWidth : volumeHeight
         );
@@ -277,7 +276,7 @@ void Renderer::render() {
         float scaleX = static_cast<float>(volumeWidth) / maxDim;
         float scaleY = static_cast<float>(volumeHeight) / maxDim;
         float scaleZ = static_cast<float>(volumeDepth) / maxDim;
-        
+       
         std::cout << "Cube scale: " << scaleX << "x" << scaleY << "x" << scaleZ << std::endl;
         std::cout << "Camera: dist=" << distance << ", yaw=" << yaw << ", pitch=" << pitch << std::endl;
         std::cout << "Center: " << (scaleX/2.0f) << ", " << (scaleY/2.0f) << ", " << (scaleZ/2.0f) << std::endl;
@@ -353,8 +352,6 @@ void Renderer::render() {
     // -----------------------------
     glDisable(GL_DEPTH_TEST);
 
-    glDisable(GL_DEPTH_TEST);
-
     glUseProgram(wireProgram);
 
     glUniformMatrix4fv(
@@ -364,8 +361,6 @@ void Renderer::render() {
 
     glBindVertexArray(cubeVAO);
     glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, 0);
-
-    glEnable(GL_DEPTH_TEST);
 
     glEnable(GL_DEPTH_TEST);
 }
