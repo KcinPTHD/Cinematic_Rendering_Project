@@ -13,6 +13,10 @@ public:
 
     void toggleDebug();
 
+    void adjustThreshold(float v);
+    void adjustDensity(float v);
+    void adjustBrightness(float v);
+
 private:
     int width, height;
 
@@ -37,6 +41,13 @@ private:
     int volumeWidth = 0;
     int volumeHeight = 0;
     int volumeDepth = 0;
+
+    // -----------------------------
+    // SLIDERS
+    // -----------------------------
+    float threshold = 0.15f;
+    float density = 0.05f;
+    float brightness = 1.5f;
 
     // -----------------------------
     // CAMERA

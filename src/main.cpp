@@ -40,9 +40,19 @@ void framebuffer_size(GLFWwindow* window, int w, int h) {
 }
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    if (key == GLFW_KEY_D && action == GLFW_PRESS) {
-        renderer->toggleDebug();
-    }
+    if (action == GLFW_PRESS || action == GLFW_REPEAT)
+{
+
+    if (key == GLFW_KEY_D && action == GLFW_PRESS) {renderer->toggleDebug();}
+    if (key == GLFW_KEY_Q) renderer->adjustThreshold(-0.01f);
+    if (key == GLFW_KEY_W) renderer->adjustThreshold(+0.01f);
+
+    if (key == GLFW_KEY_A) renderer->adjustDensity(-0.01f);
+    if (key == GLFW_KEY_S) renderer->adjustDensity(+0.01f);
+
+    if (key == GLFW_KEY_Z) renderer->adjustBrightness(-0.1f);
+    if (key == GLFW_KEY_X) renderer->adjustBrightness(+0.1f);
+}
 }
 
 int main() {

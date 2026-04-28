@@ -11,4 +11,3 @@ struct Volume {
 };
 
 Volume loadRAW(const std::string& path, int w, int h, int d);
-Volume loadVolumeAuto(const std::string& path);

@@ -71,12 +71,20 @@ Renderer::Renderer(int w, int h)
 // =====================================
 // VOLUME → GPU
 // =====================================
-void Renderer::initVolume() {
+void Renderer::initVolume()
+{
+    std::string rawPath = "data/ct.raw";
+    std::string metaPath = "data/ct.txt";
 
-    // caminho relativo à root do projeto (onde corres o exe)
-    std::string path = "data/sub-G2106_ses-01_T1w.nii";
+    int W, H, D;
 
-    Volume vol = loadVolumeAuto(path);
+    std::ifstream meta(metaPath);
+    if (!meta)
+        throw std::runtime_error("Missing ct.txt (run Python first)");
+
+    meta >> W >> H >> D;
+
+    Volume vol = loadRAW(rawPath, W, H, D);
 
     glGenTextures(1, &volumeTex);
     glBindTexture(GL_TEXTURE_3D, volumeTex);
@@ -91,7 +99,7 @@ void Renderer::initVolume() {
     glTexImage3D(
         GL_TEXTURE_3D,
         0,
-        GL_RED,
+        GL_R32F,
         vol.width,
         vol.height,
         vol.depth,
@@ -101,14 +109,6 @@ void Renderer::initVolume() {
         vol.data.data()
     );
 
-    glBindTexture(GL_TEXTURE_3D, volumeTex);
-
-    std::cout << "Volume loaded: "
-              << vol.width << "x"
-              << vol.height << "x"
-              << vol.depth << std::endl;
-
-    // Guardar dimensões do volume para uso no cubo
     volumeWidth = vol.width;
     volumeHeight = vol.height;
     volumeDepth = vol.depth;
@@ -239,6 +239,27 @@ glm::mat4 Renderer::getProj() {
                             100.0f);
 }
 
+void Renderer::adjustThreshold(float v)
+{
+    threshold += v;
+    if (threshold < 0.0f) threshold = 0.0f;
+    if (threshold > 1.0f) threshold = 1.0f;
+}
+
+void Renderer::adjustDensity(float v)
+{
+    density += v;
+    if (density < 0.0f) density = 0.0f;
+    if (density > 1.0f) density = 1.0f;
+}
+
+void Renderer::adjustBrightness(float v)
+{
+    brightness += v;
+    if (brightness < 0.1f) brightness = 0.1f;
+    if (brightness > 5.0f) brightness = 5.0f;
+}
+
 // =====================================
 // RENDER
 // =====================================
@@ -300,7 +321,19 @@ void Renderer::render() {
     // Pass volume scale to shader
     glUniform3f(
         glGetUniformLocation(raycastProgram, "volumeScale"),
-        scaleX, scaleY, scaleZ
+        scaleX,
+        scaleY,
+        scaleZ
+    );
+
+    glUniform1f(glGetUniformLocation(raycastProgram, "uThreshold"), threshold);
+    glUniform1f(glGetUniformLocation(raycastProgram, "uDensity"), density);
+    glUniform1f(glGetUniformLocation(raycastProgram, "uBrightness"), brightness);
+
+    glm::vec3 camPos = glm::inverse(view)[3];
+        glUniform3f(
+        glGetUniformLocation(raycastProgram, "cameraPos"),
+        camPos.x, camPos.y, camPos.z
     );
 
     glActiveTexture(GL_TEXTURE0);
@@ -317,6 +350,8 @@ void Renderer::render() {
     // -----------------------------
     // 2. DRAW WIREFRAME
     // -----------------------------
+    glDisable(GL_DEPTH_TEST);
+
     glUseProgram(wireProgram);
 
     glUniformMatrix4fv(
@@ -326,4 +361,6 @@ void Renderer::render() {
 
     glBindVertexArray(cubeVAO);
     glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, 0);
+
+    glEnable(GL_DEPTH_TEST);
 }
