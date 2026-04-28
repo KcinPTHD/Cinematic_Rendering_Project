@@ -12,6 +12,7 @@ Volume loadRAW(const std::string& path, int w, int h, int d)
         throw std::runtime_error("Failed to open RAW file");
 
     size_t size = (size_t)w * h * d;
+    size_t size = (size_t)w * h * d;
 
     std::vector<float> data(size);
 

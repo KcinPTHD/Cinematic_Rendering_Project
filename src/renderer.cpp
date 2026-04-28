@@ -100,6 +100,7 @@ void Renderer::initVolume()
         GL_TEXTURE_3D,
         0,
         GL_R32F,
+        GL_R32F,
         vol.width,
         vol.height,
         vol.depth,
@@ -352,6 +353,8 @@ void Renderer::render() {
     // -----------------------------
     glDisable(GL_DEPTH_TEST);
 
+    glDisable(GL_DEPTH_TEST);
+
     glUseProgram(wireProgram);
 
     glUniformMatrix4fv(
@@ -361,6 +364,8 @@ void Renderer::render() {
 
     glBindVertexArray(cubeVAO);
     glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, 0);
+
+    glEnable(GL_DEPTH_TEST);
 
     glEnable(GL_DEPTH_TEST);
 }
