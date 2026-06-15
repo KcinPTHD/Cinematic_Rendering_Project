@@ -10,6 +10,8 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <cstdlib>
+#include <ctime>
 
 // =====================================
 // SHADER UTILS
@@ -73,19 +75,160 @@ Renderer::Renderer(int w, int h)
 // =====================================
 void Renderer::initVolume()
 {
+    std::ofstream log("debug_volume.txt");
+
     std::string rawPath = "data/ct.raw";
     std::string metaPath = "data/ct.txt";
 
-    int W, H, D;
+    log << "=== INIT VOLUME START ===\n";
 
+    // -----------------------------
+    // CHECK FILES
+    // -----------------------------
     std::ifstream meta(metaPath);
     if (!meta)
-        throw std::runtime_error("Missing ct.txt (run Python first)");
+    {
+        log << "[ERROR] Missing meta file: " << metaPath << "\n";
+        throw std::runtime_error("Missing ct.txt");
+    }
 
+    std::ifstream raw(rawPath, std::ios::binary);
+    if (!raw)
+    {
+        log << "[ERROR] Missing RAW file: " << rawPath << "\n";
+        throw std::runtime_error("Failed to open RAW file");
+    }
+
+    log << "[OK] Files found\n";
+
+    // -----------------------------
+    // READ DIMS
+    // -----------------------------
+    int W, H, D;
     meta >> W >> H >> D;
 
-    Volume vol = loadRAW(rawPath, W, H, D);
+    log << "Dims read: " << W << " x " << H << " x " << D << "\n";
 
+    if (W <= 0 || H <= 0 || D <= 0)
+    {
+        log << "[ERROR] Invalid dimensions\n";
+        throw std::runtime_error("Invalid volume dimensions");
+    }
+
+    // -----------------------------
+    // LOAD RAW
+    // -----------------------------
+    Volume vol;
+    vol.width = W;
+    vol.height = H;
+    vol.depth = D;
+    vol.data.resize(W * H * D);
+
+    raw.read(reinterpret_cast<char*>(vol.data.data()),
+             vol.data.size() * sizeof(float));
+
+    log << "Expected bytes: " << vol.data.size() * sizeof(float) << "\n";
+    log << "Bytes actually read: " << raw.gcount() << "\n";
+
+    if (!raw)
+    {
+        log << "[WARNING] RAW read may be incomplete\n";
+    }
+
+    // -----------------------------
+    // DATA VALIDATION
+    // -----------------------------
+    float minV = 1e9f;
+    float maxV = -1e9f;
+    float avg = 0.0f;
+
+    for (size_t i = 0; i < vol.data.size(); i++)
+    {
+        float v = vol.data[i];
+
+        if (std::isnan(v) || std::isinf(v))
+        {
+            log << "[ERROR] NaN/INF detected at index " << i << "\n";
+            throw std::runtime_error("Invalid voxel data");
+        }
+
+        minV = std::min(minV, v);
+        maxV = std::max(maxV, v);
+        avg += v;
+    }
+
+    avg /= vol.data.size();
+
+    log << "Data stats:\n";
+    log << "  Min: " << minV << "\n";
+    log << "  Max: " << maxV << "\n";
+    log << "  Avg: " << avg << "\n";
+
+    // -----------------------------
+    // DEBUG MELHORADO (substitui os Sample voxels aleatórios)
+    // -----------------------------
+    log << "Non-zero voxel analysis:\n";
+
+    size_t zeroCount = 0;
+    size_t nonZeroCount = 0;
+    float maxValue = -1e9f;
+    size_t maxIndex = 0;
+
+    // 1ª passagem: contagem de zeros e localização do máximo
+    for (size_t i = 0; i < vol.data.size(); ++i)
+    {
+        float v = vol.data[i];
+        if (v == 0.0f)
+            zeroCount++;
+        else
+        {
+            nonZeroCount++;
+            if (v > maxValue)
+            {
+                maxValue = v;
+                maxIndex = i;
+            }
+        }
+    }
+
+    log << "  Zero voxels: " << zeroCount << "\n";
+    log << "  Non-zero voxels: " << nonZeroCount << "\n";
+
+    if (nonZeroCount > 0)
+    {
+        unsigned int z = maxIndex / (vol.width * vol.height);
+        unsigned int y = (maxIndex % (vol.width * vol.height)) / vol.width;
+        unsigned int x = (maxIndex % (vol.width * vol.height)) % vol.width;
+        log << "  Max value: " << maxValue << " at index " << maxIndex
+            << " (" << x << "," << y << "," << z << ")\n";
+    }
+    else
+    {
+        log << "  Max value: N/A (volume all zeros?)\n";
+    }
+
+    // Mostrar os primeiros 10 voxels não-nulos com as suas coordenadas
+    log << "First 10 non-zero voxels:\n";
+    int printed = 0;
+    for (size_t i = 0; i < vol.data.size() && printed < 10; ++i)
+    {
+        float v = vol.data[i];
+        if (v > 0.0f)
+        {
+            unsigned int z = i / (vol.width * vol.height);
+            unsigned int y = (i % (vol.width * vol.height)) / vol.width;
+            unsigned int x = (i % (vol.width * vol.height)) % vol.width;
+            log << "  [" << i << "] = " << v
+                << "  (" << x << "," << y << "," << z << ")\n";
+            printed++;
+        }
+    }
+    if (printed == 0)
+        log << "  (no non-zero voxels found)\n";
+
+    // -----------------------------
+    // UPLOAD GPU
+    // -----------------------------
     glGenTextures(1, &volumeTex);
     glBindTexture(GL_TEXTURE_3D, volumeTex);
 
@@ -109,9 +252,66 @@ void Renderer::initVolume()
         vol.data.data()
     );
 
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR)
+        log << "[OPENGL ERROR] glTexImage3D failed: " << err << "\n";
+    else
+        log << "[OK] Texture uploaded to GPU\n";
+
     volumeWidth = vol.width;
     volumeHeight = vol.height;
     volumeDepth = vol.depth;
+
+    log << "Final volume dims set in renderer: "
+        << volumeWidth << " "
+        << volumeHeight << " "
+        << volumeDepth << "\n";
+
+    // DIAGNOSTIC: Sample some voxels to verify data is in texture
+    log << "\n=== TEXTURE DIAGNOSTIC ===\n";
+    log << "Data distribution analysis:\n";
+    
+    // Count voxels per z-slice
+    std::vector<int> sliceNonZero(vol.depth, 0);
+    for (size_t i = 0; i < vol.data.size(); i++)
+    {
+        if (vol.data[i] > 0.0f)
+        {
+            unsigned int z = i / (vol.width * vol.height);
+            if (z < vol.depth)
+                sliceNonZero[z]++;
+        }
+    }
+    
+    log << "Non-zero voxel counts per slice (first 10 slices):\n";
+    for (int z = 0; z < 10 && z < vol.depth; z++)
+    {
+        log << "  Slice " << z << ": " << sliceNonZero[z] << " non-zero voxels\n";
+    }
+    
+    // Sample from known non-zero region (around slice 73, x~191, y~273)
+    log << "\nSampling from known data region (around index 19276479):\n";
+    for (int dz = -2; dz <= 2; dz++)
+    {
+        int z = 73 + dz;
+        if (z >= 0 && z < vol.depth)
+        {
+            for (int dy = -2; dy <= 2; dy++)
+            {
+                int y = 273 + dy;
+                if (y >= 0 && y < vol.height)
+                {
+                    int x = 191;
+                    size_t idx = z * vol.width * vol.height + y * vol.width + x;
+                    if (idx < vol.data.size())
+                        log << "  (" << x << "," << y << "," << z << ") = " << vol.data[idx] << "\n";
+                }
+            }
+        }
+    }
+    
+    log << "=== INIT VOLUME END ===\n";
+    log.close();
 }
 
 // =====================================
@@ -128,9 +328,15 @@ void Renderer::initCube() {
     float scaleY = static_cast<float>(volumeHeight) / maxDim;
     float scaleZ = static_cast<float>(volumeDepth) / maxDim;
 
+    // Cube centered at origin: from -scale/2 to +scale/2
+    // This ensures proper ray-casting alignment
+    float hx = scaleX / 2.0f;
+    float hy = scaleY / 2.0f;
+    float hz = scaleZ / 2.0f;
+
     float vertices[] = {
-        0,0,0,     scaleX,0,0,     scaleX,scaleY,0,  0,scaleY,0,
-        0,0,scaleZ,  scaleX,0,scaleZ,  scaleX,scaleY,scaleZ,  0,scaleY,scaleZ
+        -hx,-hy,-hz,  hx,-hy,-hz,  hx,hy,-hz,  -hx,hy,-hz,
+        -hx,-hy,hz,   hx,-hy,hz,   hx,hy,hz,   -hx,hy,hz
     };
 
     unsigned int indices[] = {
@@ -207,6 +413,11 @@ void Renderer::toggleDebug() {
     std::cout << "[DEBUG] " << (debugEnabled ? "ON" : "OFF") << std::endl;
 }
 
+void Renderer::toggleWireframe() {
+    wireframeEnabled = !wireframeEnabled;
+    std::cout << "[WIREFRAME] " << (wireframeEnabled ? "ON" : "OFF") << std::endl;
+}
+
 glm::mat4 Renderer::getView() {
     // Calcular escala baseada nas dimensões do volume
     float maxDim = static_cast<float>(
@@ -218,8 +429,8 @@ glm::mat4 Renderer::getView() {
     float scaleY = static_cast<float>(volumeHeight) / maxDim;
     float scaleZ = static_cast<float>(volumeDepth) / maxDim;
 
-    // Centro do cubo = meio das dimensões
-    glm::vec3 c(scaleX / 2.0f, scaleY / 2.0f, scaleZ / 2.0f);
+    // Cube is now centered at origin
+    glm::vec3 c(0.0f, 0.0f, 0.0f);
 
     glm::vec3 p;
     p.x = c.x + distance * cos(pitch) * sin(yaw);
@@ -233,8 +444,14 @@ glm::mat4 Renderer::getProj() {
     int w, h;
     glfwGetFramebufferSize(glfwGetCurrentContext(), &w, &h);
 
+    // Guard against invalid window size
+    if (w <= 0) w = 1;
+    if (h <= 0) h = 1;
+
+    float aspect = static_cast<float>(w) / static_cast<float>(h);
+    
     return glm::perspective(glm::radians(45.0f),
-                            (float)w/h,
+                            aspect,
                             0.1f,
                             100.0f);
 }
@@ -278,8 +495,12 @@ void Renderer::render() {
         float scaleZ = static_cast<float>(volumeDepth) / maxDim;
        
         std::cout << "Cube scale: " << scaleX << "x" << scaleY << "x" << scaleZ << std::endl;
+        std::cout << "Cube range: [-" << scaleX/2.0f << "," << scaleX/2.0f << "] x "
+                  << "[-" << scaleY/2.0f << "," << scaleY/2.0f << "] x "
+                  << "[-" << scaleZ/2.0f << "," << scaleZ/2.0f << "]" << std::endl;
         std::cout << "Camera: dist=" << distance << ", yaw=" << yaw << ", pitch=" << pitch << std::endl;
-        std::cout << "Center: " << (scaleX/2.0f) << ", " << (scaleY/2.0f) << ", " << (scaleZ/2.0f) << std::endl;
+        std::cout << "Center: (0, 0, 0)" << std::endl;
+        std::cout << "Threshold: " << threshold << ", Density: " << density << ", Brightness: " << brightness << std::endl;
         std::cout << "=============" << std::endl;
     }
 
@@ -348,19 +569,22 @@ void Renderer::render() {
     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0); // volume proxy
 
     // -----------------------------
-    // 2. DRAW WIREFRAME
+    // 2. DRAW WIREFRAME (no z-fighting)
     // -----------------------------
-    glDisable(GL_DEPTH_TEST);
+    if (wireframeEnabled)
+    {
+        glDisable(GL_DEPTH_TEST);
 
-    glUseProgram(wireProgram);
+        glUseProgram(wireProgram);
 
-    glUniformMatrix4fv(
-        glGetUniformLocation(wireProgram, "mvp"),
-        1, GL_FALSE, &mvp[0][0]
-    );
+        glUniformMatrix4fv(
+            glGetUniformLocation(wireProgram, "mvp"),
+            1, GL_FALSE, &mvp[0][0]
+        );
 
-    glBindVertexArray(cubeVAO);
-    glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, 0);
+        glBindVertexArray(cubeVAO);
+        glDrawElements(GL_LINES, 24, GL_UNSIGNED_INT, 0);
 
-    glEnable(GL_DEPTH_TEST);
+        glEnable(GL_DEPTH_TEST);
+    }
 }

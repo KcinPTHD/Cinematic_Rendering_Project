@@ -1,6 +1,7 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include "renderer.h"
+#include "debug_logger.h"
 
 #include <iostream>
 
@@ -41,22 +42,44 @@ void framebuffer_size(GLFWwindow* window, int w, int h) {
 
 void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
     if (action == GLFW_PRESS || action == GLFW_REPEAT)
-{
+    {
+        if (key == GLFW_KEY_D && action == GLFW_PRESS) { renderer->toggleDebug(); }
+        if (key == GLFW_KEY_F && action == GLFW_PRESS) { renderer->toggleWireframe(); }
+        
+        // Threshold: Q/W with shift for finer control
+        if (key == GLFW_KEY_Q)
+        {
+            float step = (mods & GLFW_MOD_SHIFT) ? -0.001f : -0.01f;
+            renderer->adjustThreshold(step);
+        }
+        if (key == GLFW_KEY_W)
+        {
+            float step = (mods & GLFW_MOD_SHIFT) ? 0.001f : 0.01f;
+            renderer->adjustThreshold(step);
+        }
 
-    if (key == GLFW_KEY_D && action == GLFW_PRESS) {renderer->toggleDebug();}
-    if (key == GLFW_KEY_Q) renderer->adjustThreshold(-0.01f);
-    if (key == GLFW_KEY_W) renderer->adjustThreshold(+0.01f);
+        // Density: A/S with shift for finer control
+        if (key == GLFW_KEY_A)
+        {
+            float step = (mods & GLFW_MOD_SHIFT) ? -0.001f : -0.01f;
+            renderer->adjustDensity(step);
+        }
+        if (key == GLFW_KEY_S)
+        {
+            float step = (mods & GLFW_MOD_SHIFT) ? 0.001f : 0.01f;
+            renderer->adjustDensity(step);
+        }
 
-    if (key == GLFW_KEY_A) renderer->adjustDensity(-0.01f);
-    if (key == GLFW_KEY_S) renderer->adjustDensity(+0.01f);
-
-    if (key == GLFW_KEY_Z) renderer->adjustBrightness(-0.1f);
-    if (key == GLFW_KEY_X) renderer->adjustBrightness(+0.1f);
-}
+        // Brightness: Z/X
+        if (key == GLFW_KEY_Z) renderer->adjustBrightness(-0.1f);
+        if (key == GLFW_KEY_X) renderer->adjustBrightness(+0.1f);
+    }
 }
 
 int main() {
     glfwInit();
+
+    DebugLogger::init("debug.txt");
 
     GLFWwindow* window = glfwCreateWindow(width, height, "Volume Renderer", nullptr, nullptr);
     glfwMakeContextCurrent(window);
@@ -80,6 +103,8 @@ int main() {
         glfwPollEvents();
     }
 
+
     glfwTerminate();
+    DebugLogger::close();
     return 0;
 }

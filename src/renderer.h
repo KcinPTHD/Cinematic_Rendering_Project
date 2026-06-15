@@ -13,6 +13,8 @@ public:
 
     void toggleDebug();
 
+    void toggleWireframe();
+
     void adjustThreshold(float v);
     void adjustDensity(float v);
     void adjustBrightness(float v);
@@ -60,6 +62,7 @@ private:
     // DEBUG
     // -----------------------------
     bool debugEnabled = false;
+    bool wireframeEnabled = true;
 
     // -----------------------------
     // METHODS
