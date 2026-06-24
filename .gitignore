@@ -1,5 +1,5 @@
 bin/
-venv/
+.venv/
 data/
 debug.txt
 debug_volume.txt

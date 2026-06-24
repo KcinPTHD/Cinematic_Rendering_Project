@@ -1,49 +1,131 @@
-## Volume Renderer - Build & Run Guide
+---
 
-### Prerequisites
-- MinGW/GCC installed with g++ compiler
-- GLFW, GLM, and GLAD libraries already set up in `C:\OpenGL\`
-- Python 3 with pydicom and numpy installed (for DICOM conversion)
+```markdown
+# Volume Renderer - Build & Run Guide
 
-### Step 1: Convert DICOM to RAW format
+## Prerequisites
 
-**Default (uses WDH orientation):**
-```bash
-python utils/convert_to_raw.py
-```
+### Common (both platforms)
+- **Git** (optional, for cloning)
+- **Python 3** with `pydicom` and `numpy` installed (for DICOM conversion)
+- **GLM** math library (for C++)
 
-**Auto-detect best orientation:**
+### Windows
+- **MinGW-w64** (GCC for Windows) with `g++` compiler
+- **GLFW**, **GLM**, and **GLAD** libraries set up in `C:\OpenGL\`
+- **GLFW3.DLL** – copy `C:\OpenGL\glfw\lib-mingw-w64\glfw3.dll` to `bin\` after compilation
+
+### Linux / WSL
+- **GCC** compiler (`g++`) and build tools
+- **GLFW** development libraries: `sudo apt install libglfw3-dev`
+- **GLM** development libraries: `sudo apt install libglm-dev`
+- **GLAD** – source files should be in your OpenGL directory (e.g., `/mnt/c/OpenGL/glad/`)
+
+---
+
+## Step 1: Convert DICOM to RAW format
+
+**Automatic conversion (recommended):**  
+The provided Makefile handles this step for you. Simply run:
+
+- **Linux/WSL:** `make`
+- **Windows:** `make -f Makefile.win`
+
+This will create a Python virtual environment, install dependencies, and run `convert_to_raw.py --auto-detect` automatically.
+
+---
+
+**Manual conversion (optional):**  
+If you prefer to run the conversion separately, use:
+
 ```bash
 python utils/convert_to_raw.py --auto-detect
-```
 
-This script:
+### What the script does:
 - Reads all `.dcm` files from `data/ct/`
 - Sorts them by InstanceNumber
 - Normalizes intensity values to [0, 1]
-- Detects optimal axis orientation (if `--auto-detect` flag is used):
-  - Primary: Checks DICOM metadata (ImageOrientationPatient tag)
-  - Fallback: Analyzes bilateral symmetry to find best orientation
+- Detects optimal axis orientation (if `--auto-detect`):
+  - Primary: Checks DICOM metadata (`ImageOrientationPatient` tag)
+  - Fallback: Analyzes bilateral symmetry
   - Default: Uses WDH if detection is uncertain
 - Outputs `data/ct.raw` and `data/ct.txt` (metadata)
-- Prints debug information including detected orientation and data statistics
+- Prints debug info including detected orientation and data statistics
 
-### Step 2: Compile the C++ code
+---
 
-**Using g++ directly:**
-```bash
-g++ -g src/*.cpp C:/OpenGL/glad/src/glad.c -o bin/app.exe -I C:/OpenGL/glfw/include -I C:/OpenGL/glm/include -I C:/OpenGL/glad/include -L C:/OpenGL/glfw/lib-mingw-w64 -lglfw3dll -lopengl32
-```
+## Step 2: Compile the C++ code
 
-**Or use the VS Code build task (Ctrl+Shift+B)**
+### Windows (native .exe)
 
-### Step 3: Run the application
+#### Option A: Using the provided Makefile (recommended)
+The project includes `Makefile.win` for MinGW-w64.
 
 ```bash
-bin/app.exe
+make -f Makefile.win
 ```
 
-### Controls
+This produces `bin/app.exe`.
+
+**After compilation, copy the GLFW DLL:**
+```bash
+cp C:/OpenGL/glfw/lib-mingw-w64/glfw3.dll bin/
+```
+
+#### Option B: Manual g++ command
+```bash
+g++ -g -Wall -static-libgcc -static-libstdc++ src/*.cpp C:/OpenGL/glad/src/glad.c -o bin/app.exe -I C:/OpenGL/glfw/include -I C:/OpenGL/glm/include -I C:/OpenGL/glad/include -L C:/OpenGL/glfw/lib-mingw-w64 -lglfw3dll -lopengl32 -lgdi32
+```
+
+Then copy `glfw3.dll` to `bin/` as above.
+
+---
+
+### Linux / WSL (native binary)
+
+#### Option A: Using the provided Makefile (recommended)
+```bash
+make
+```
+
+This produces `bin/app` (Linux executable).
+
+#### Option B: Manual g++ command
+```bash
+g++ -g -Wall src/*.cpp /path/to/glad/src/glad.c -o bin/app -I /usr/include/glm -I /path/to/glad/include -lglfw -lGL -ldl -lm
+```
+
+*(Adjust paths to your GLAD and GLM installations.)*
+
+---
+
+## Step 3: Run the application
+
+### Windows
+```powershell
+.\bin\app.exe
+```
+or with cinematic mode:
+```powershell
+.\bin\app.exe --cinematic
+```
+
+**Important:** The file `glfw3.dll` must be in the same folder as `app.exe` (i.e., `bin/`).
+
+---
+
+### Linux / WSL
+```bash
+./bin/app
+```
+or with cinematic mode:
+```bash
+./bin/app --cinematic
+```
+
+---
+
+## Controls
 
 | Key | Action |
 |-----|--------|
@@ -55,49 +137,57 @@ bin/app.exe
 | **Mouse Drag** | Rotate view |
 | **Mouse Wheel** | Zoom in/out |
 
-### Debugging
+---
 
-The application generates debug output:
-- **debug_volume.txt** - Volume loading information (dimensions, data stats, non-zero voxel analysis)
-- **debug.txt** - Runtime debug output (when debug mode is enabled with D key)
+## Debugging
 
-Press **D** while the app is running to toggle debug console output showing:
+The application generates debug output files in the project root:
+- **`debug_volume.txt`** – Volume loading information (dimensions, data stats, non-zero voxel analysis)
+- **`debug.txt`** – Runtime debug output (when debug mode is enabled with **D** key)
+
+Press **D** while the app is running to toggle console debug output showing:
 - Current volume dimensions
-- Cube coordinate ranges (now centered at origin)
+- Cube coordinate ranges (centered at origin)
 - Camera position and angles
 - Current rendering parameters (threshold, density, brightness)
 
-### Recent Fixes
+---
 
-1. **Centered Cube Geometry** - Cube now centered at origin for proper ray-casting alignment
-2. **Coordinate System** - Texture coordinates properly mapped from centered world space to [0,1]
-3. **DICOM Processing** - Enhanced debugging output to verify slice ordering and data normalization
-4. **Shader Math** - Fixed ray-volume intersection calculations for centered geometry
-5. **Precise Controls** - Added Shift modifier for fine-grained threshold/density adjustment (±0.001 vs ±0.01)
-6. **Z-Fighting Eliminated** - Wireframe now rendered with depth test disabled to prevent artifacts
-7. **Wireframe Toggle** - Press F to show/hide wireframe reference box
-
-### Orientation Handling
+## Orientation Handling
 
 **Automatic (Recommended):**
 ```bash
 python utils/convert_to_raw.py --auto-detect
 ```
+
 The script will automatically detect the correct orientation by:
-1. Checking DICOM ImageOrientationPatient metadata
+1. Checking DICOM `ImageOrientationPatient` metadata
 2. Analyzing bilateral symmetry to identify axis ordering
 3. Printing the detected orientation in the output
+
+---
 
 **Manual Testing (for debugging or comparing orientations):**
 ```bash
 cd utils
 python convert_to_raw_debug.py
 ```
+
 This generates 4 test files with different orientations:
-- `ct_test_WHD.raw` - width, height, depth
-- `ct_test_WDH.raw` - width, depth, height
-- `ct_test_HWD.raw` - height, width, depth
-- `ct_test_DHW.raw` - depth, height, width
+- `ct_test_WHD.raw` – width, height, depth
+- `ct_test_WDH.raw` – width, depth, height
+- `ct_test_HWD.raw` – height, width, depth
+- `ct_test_DHW.raw` – depth, height, width
 
 Then copy the desired orientation files to `data/ct.raw` and `data/ct.txt`.
 
+---
+
+## Notes
+
+- The **Makefile** (`Makefile` for Linux/WSL, `Makefile.win` for Windows) handles automatic DICOM conversion and compilation in one step.
+- For Windows, remember to **copy `glfw3.dll`** to the `bin/` folder after compilation.
+- If using WSL, the Linux binary runs under WSLg and will display the OpenGL window natively on Windows.
+```
+
+---

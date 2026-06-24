@@ -1,0 +1,37 @@
+# Makefile para Windows (usando MinGW‑w64 no WSL ou no Windows)
+TARGET      := app.exe
+BIN_DIR     := bin
+SRC_DIR     := src
+
+# Caminhos para as bibliotecas (ajusta se necessário)
+OPENGL_DIR  := /mnt/c/OpenGL
+GLAD_DIR    := $(OPENGL_DIR)/glad
+GLFW_DIR    := $(OPENGL_DIR)/glfw
+GLM_DIR     := $(OPENGL_DIR)/glm
+
+# Compilador MinGW (cria .exe)
+CXX         := x86_64-w64-mingw32-g++
+CXXFLAGS    := -g -Wall -static-libgcc -static-libstdc++ \
+               -I$(GLFW_DIR)/include \
+               -I$(GLM_DIR)/include \
+               -I$(GLAD_DIR)/include
+
+LDFLAGS     := -L$(GLFW_DIR)/lib-mingw-w64 \
+               -lglfw3dll -lopengl32 -lgdi32
+
+SRC := $(wildcard $(SRC_DIR)/*.cpp) $(GLAD_DIR)/src/glad.c
+OUT := $(BIN_DIR)/$(TARGET)
+
+all: $(OUT)
+
+$(OUT): $(SRC) | $(BIN_DIR)
+	$(CXX) $(CXXFLAGS) $^ -o $@ $(LDFLAGS)
+	@echo "Build successful -> $(OUT)"
+
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
+clean:
+	rm -rf $(BIN_DIR)
+
+.PHONY: all clean
