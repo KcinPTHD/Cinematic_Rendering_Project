@@ -1,6 +1,3 @@
----
-
-```markdown
 # Volume Renderer - Build & Run Guide
 
 ## Prerequisites
@@ -40,6 +37,7 @@ If you prefer to run the conversion separately, use:
 
 ```bash
 python utils/convert_to_raw.py --auto-detect
+```
 
 ### What the script does:
 - Reads all `.dcm` files from `data/ct/`
@@ -69,7 +67,7 @@ This produces `bin/app.exe`.
 
 **After compilation, copy the GLFW DLL:**
 ```bash
-cp C:/OpenGL/glfw/lib-mingw-w64/glfw3.dll bin/
+copy C:\OpenGL\glfw\lib-mingw-w64\glfw3.dll bin\
 ```
 
 #### Option B: Manual g++ command
@@ -77,7 +75,7 @@ cp C:/OpenGL/glfw/lib-mingw-w64/glfw3.dll bin/
 g++ -g -Wall -static-libgcc -static-libstdc++ src/*.cpp C:/OpenGL/glad/src/glad.c -o bin/app.exe -I C:/OpenGL/glfw/include -I C:/OpenGL/glm/include -I C:/OpenGL/glad/include -L C:/OpenGL/glfw/lib-mingw-w64 -lglfw3dll -lopengl32 -lgdi32
 ```
 
-Then copy `glfw3.dll` to `bin/` as above.
+Then copy `glfw3.dll` to `bin\` as above.
 
 ---
 
