@@ -1,0 +1,22 @@
+This project uses the following third-party libraries:
+
+1. GLFW - https://www.glfw.org/
+   License: zlib/libpng
+   Copyright (c) 2002-2006 Marcus Geelnard
+   Copyright (c) 2006-2019 Camilla Löwy
+   (See license in glfw/LICENSE.txt)
+
+2. GLM - https://github.com/g-truc/glm
+   License: MIT
+   Copyright (c) 2005 - G-Truc Creation
+   (See license in glm/copying.txt)
+
+3. GLAD - https://github.com/Dav1dde/glad
+   License: MIT (or Public Domain)
+   Copyright (c) 2013-2022 David Herberth
+   (See license in glad/LICENSE)
+
+4. Dear ImGui - https://github.com/ocornut/imgui
+   License: MIT
+   Copyright (c) 2014-2023 Omar Cornut
+   (See license in imgui/LICENSE.txt)

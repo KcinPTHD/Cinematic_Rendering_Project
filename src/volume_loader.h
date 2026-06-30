@@ -3,10 +3,9 @@
 #include <string>
 
 struct Volume {
-    int width = 0;
-    int height = 0;
-    int depth = 0;
-
+    unsigned int width = 0;
+    unsigned int height = 0;
+    unsigned int depth = 0;
     std::vector<float> data;
 };
 

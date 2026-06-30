@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <string>
 
 class Renderer {
 public:
@@ -12,12 +13,14 @@ public:
     void onZoom(float delta);
 
     void toggleDebug();
-
     void toggleWireframe();
 
     void adjustThreshold(float v);
     void adjustDensity(float v);
     void adjustBrightness(float v);
+
+    // Load a specific dataset (name = subdirectory in data/)
+    bool loadDataset(const std::string& name);
 
 private:
     int width, height;
@@ -33,16 +36,23 @@ private:
     // SHADERS
     // -----------------------------
     unsigned int wireProgram;
-    unsigned int volumeProgram;
     unsigned int raycastProgram;
 
     // -----------------------------
     // VOLUME
     // -----------------------------
     unsigned int volumeTex;
-    int volumeWidth = 0;
-    int volumeHeight = 0;
-    int volumeDepth = 0;
+    unsigned int volumeWidth = 0;
+    unsigned int volumeHeight = 0;
+    unsigned int volumeDepth = 0;
+
+    // Espaçamento físico real (mm) por eixo, lido do DICOM
+    // (PixelSpacing / SliceThickness). Usado para que datasets com
+    // voxels não-cúbicos (ex. cortes de tórax mais espessos que a
+    // resolução in-plane) não fiquem "esmagados" num eixo.
+    float voxelSpacingX = 1.0f;
+    float voxelSpacingY = 1.0f;
+    float voxelSpacingZ = 1.0f;
 
     // -----------------------------
     // SLIDERS
@@ -70,6 +80,11 @@ private:
     void initCube();
     void initShaders();
     void initVolume();
+
+    // Calcula a escala normalizada do cubo (maior eixo = 1) usando o
+    // tamanho FÍSICO real (contagem*espaçamento), não a contagem de
+    // voxels em bruto.
+    glm::vec3 computeCubeScale();
 
     glm::mat4 getView();
     glm::mat4 getProj();

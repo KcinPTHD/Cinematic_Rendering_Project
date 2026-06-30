@@ -189,3 +189,27 @@ Then copy the desired orientation files to `data/ct.raw` and `data/ct.txt`.
 ```
 
 ---
+
+## Third-Party Libraries
+
+This project uses the following open-source libraries:
+
+- **GLFW** – Window and context management  
+  License: [zlib/libpng](https://www.glfw.org/license.html)  
+  Copyright (c) 2002-2006 Marcus Geelnard, 2006-2019 Camilla Löwy
+
+- **GLM** – OpenGL Mathematics  
+  License: [MIT](https://github.com/g-truc/glm/blob/master/copying.txt)  
+  Copyright (c) 2005 – G-Truc Creation
+
+- **GLAD** – OpenGL loader  
+  License: [MIT](https://github.com/Dav1dde/glad/blob/master/LICENSE) (or Public Domain)  
+  Copyright (c) 2013-2022 David Herberth
+
+- **Dear ImGui** – Graphical user interface  
+  License: [MIT](https://github.com/ocornut/imgui/blob/master/LICENSE.txt)  
+  Copyright (c) 2014-2023 Omar Cornut
+
+Full license texts are available in the `LICENSE.txt` file included in this repository.
+
+---

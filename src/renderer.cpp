@@ -64,9 +64,17 @@ static unsigned int createProgram(const char* vs, const char* fs) {
 Renderer::Renderer(int w, int h)
     : width(w), height(h)
 {
-    // IMPORTANTE: initVolume() primeiro para ter as dimensões
-    initVolume();
-    initCube();
+    // Inicializar a textura a 0 (ainda sem volume carregado)
+    volumeTex = 0;
+    volumeWidth = 0;
+    volumeHeight = 0;
+    volumeDepth = 0;
+    
+    // Inicializar VAO/VBO/EBO a 0 para evitar deleções inválidas
+    cubeVAO = 0;
+    cubeVBO = 0;
+    cubeEBO = 0;
+    
     initShaders();
 }
 
@@ -104,10 +112,24 @@ void Renderer::initVolume()
     // -----------------------------
     // READ DIMS
     // -----------------------------
+    // META FORMAT: "width height depth spacingW spacingH spacingD" (mm).
+    // As contagens já vêm na ordem exata que glTexImage3D(width,height,depth,...)
+    // espera (ver convert_to_raw.py para a explicação completa do porquê do
+    // transpose (h,d,w)). O espaçamento físico segue a MESMA ordem de eixos.
     int W, H, D;
+    float spacingW = 1.0f, spacingH = 1.0f, spacingD = 1.0f;
     meta >> W >> H >> D;
+    if (!(meta >> spacingW >> spacingH >> spacingD)) {
+        // Compatibilidade com metas antigos sem espaçamento: assume isotrópico
+        spacingW = spacingH = spacingD = 1.0f;
+        log << "[WARNING] Meta sem espaçamento físico; a assumir voxels cúbicos\n";
+    }
+    voxelSpacingX = spacingW;
+    voxelSpacingY = spacingH;
+    voxelSpacingZ = spacingD;
 
     log << "Dims read: " << W << " x " << H << " x " << D << "\n";
+    log << "Spacing read (mm): " << spacingW << " x " << spacingH << " x " << spacingD << "\n";
 
     if (W <= 0 || H <= 0 || D <= 0)
     {
@@ -196,9 +218,9 @@ void Renderer::initVolume()
 
     if (nonZeroCount > 0)
     {
-        unsigned int z = maxIndex / (vol.width * vol.height);
-        unsigned int y = (maxIndex % (vol.width * vol.height)) / vol.width;
-        unsigned int x = (maxIndex % (vol.width * vol.height)) % vol.width;
+        int z = maxIndex / (vol.width * vol.height);
+        int y = (maxIndex % (vol.width * vol.height)) / vol.width;
+        int x = (maxIndex % (vol.width * vol.height)) % vol.width;
         log << "  Max value: " << maxValue << " at index " << maxIndex
             << " (" << x << "," << y << "," << z << ")\n";
     }
@@ -215,9 +237,9 @@ void Renderer::initVolume()
         float v = vol.data[i];
         if (v > 0.0f)
         {
-            unsigned int z = i / (vol.width * vol.height);
-            unsigned int y = (i % (vol.width * vol.height)) / vol.width;
-            unsigned int x = (i % (vol.width * vol.height)) % vol.width;
+            int z = i / (vol.width * vol.height);
+            int y = (i % (vol.width * vol.height)) / vol.width;
+            int x = (i % (vol.width * vol.height)) % vol.width;
             log << "  [" << i << "] = " << v
                 << "  (" << x << "," << y << "," << z << ")\n";
             printed++;
@@ -261,6 +283,9 @@ void Renderer::initVolume()
     volumeWidth = vol.width;
     volumeHeight = vol.height;
     volumeDepth = vol.depth;
+    voxelSpacingX = spacingW;
+    voxelSpacingY = spacingH;
+    voxelSpacingZ = spacingD;
 
     log << "Final volume dims set in renderer: "
         << volumeWidth << " "
@@ -277,14 +302,14 @@ void Renderer::initVolume()
     {
         if (vol.data[i] > 0.0f)
         {
-            unsigned int z = i / (vol.width * vol.height);
-            if (z < vol.depth)
+            int z = i / (vol.width * vol.height);
+            if (z < (int)vol.depth)
                 sliceNonZero[z]++;
         }
     }
     
     log << "Non-zero voxel counts per slice (first 10 slices):\n";
-    for (int z = 0; z < 10 && z < vol.depth; z++)
+    for (int z = 0; z < 10 && z < (int)vol.depth; z++)
     {
         log << "  Slice " << z << ": " << sliceNonZero[z] << " non-zero voxels\n";
     }
@@ -294,12 +319,12 @@ void Renderer::initVolume()
     for (int dz = -2; dz <= 2; dz++)
     {
         int z = 73 + dz;
-        if (z >= 0 && z < vol.depth)
+        if (z >= 0 && z < (int)vol.depth)
         {
             for (int dy = -2; dy <= 2; dy++)
             {
                 int y = 273 + dy;
-                if (y >= 0 && y < vol.height)
+                if (y >= 0 && y < (int)vol.height)
                 {
                     int x = 191;
                     size_t idx = z * vol.width * vol.height + y * vol.width + x;
@@ -312,21 +337,45 @@ void Renderer::initVolume()
     
     log << "=== INIT VOLUME END ===\n";
     log.close();
+    
+    // Reconstruir o cubo com as novas dimensões
+    initCube();
 }
 
 // =====================================
 // CUBE (BOUNDING BOX) - adapta-se às dimensões do volume
 // =====================================
-void Renderer::initCube() {
-    // Usar as dimensões reais do volume (normalizado para que o maior eixo = 1)
-    float maxDim = static_cast<float>(
-        volumeWidth > volumeHeight ? volumeWidth : volumeHeight
-    );
-    maxDim = maxDim > volumeDepth ? maxDim : static_cast<float>(volumeDepth);
+// =====================================
+// PHYSICAL SCALE (conta voxels * espaçamento real em mm)
+// =====================================
+glm::vec3 Renderer::computeCubeScale() {
+    float physW = static_cast<float>(volumeWidth)  * voxelSpacingX;
+    float physH = static_cast<float>(volumeHeight) * voxelSpacingY;
+    float physD = static_cast<float>(volumeDepth)  * voxelSpacingZ;
 
-    float scaleX = static_cast<float>(volumeWidth) / maxDim;
-    float scaleY = static_cast<float>(volumeHeight) / maxDim;
-    float scaleZ = static_cast<float>(volumeDepth) / maxDim;
+    float maxDim = physW;
+    if (physH > maxDim) maxDim = physH;
+    if (physD > maxDim) maxDim = physD;
+    if (maxDim <= 0.0f) maxDim = 1.0f;
+
+    return glm::vec3(physW / maxDim, physH / maxDim, physD / maxDim);
+}
+
+void Renderer::initCube() {
+    // Delete old buffers if they exist
+    if (cubeVAO) glDeleteVertexArrays(1, &cubeVAO);
+    if (cubeVBO) glDeleteBuffers(1, &cubeVBO);
+    if (cubeEBO) glDeleteBuffers(1, &cubeEBO);
+    cubeVAO = cubeVBO = cubeEBO = 0;
+
+    // Usar o tamanho FÍSICO real do volume (contagem*espaçamento em mm,
+    // normalizado para que o maior eixo = 1) em vez da contagem de
+    // voxels em bruto. Isto evita "esmagar" eixos quando o espaçamento
+    // entre cortes é diferente do espaçamento in-plane.
+    glm::vec3 scale = computeCubeScale();
+    float scaleX = scale.x;
+    float scaleY = scale.y;
+    float scaleZ = scale.z;
 
     // Cube centered at origin: from -scale/2 to +scale/2
     // This ensures proper ray-casting alignment
@@ -378,11 +427,6 @@ void Renderer::initShaders() {
         "shaders/wire.frag"
     );
 
-    volumeProgram = createProgram(
-        "shaders/volume.vert",
-        "shaders/volume.frag"
-    );
-
     raycastProgram = createProgram(
         "shaders/raycast.vert",
         "shaders/raycast.frag"
@@ -419,16 +463,6 @@ void Renderer::toggleWireframe() {
 }
 
 glm::mat4 Renderer::getView() {
-    // Calcular escala baseada nas dimensões do volume
-    float maxDim = static_cast<float>(
-        volumeWidth > volumeHeight ? volumeWidth : volumeHeight
-    );
-    maxDim = maxDim > volumeDepth ? maxDim : static_cast<float>(volumeDepth);
-
-    float scaleX = static_cast<float>(volumeWidth) / maxDim;
-    float scaleY = static_cast<float>(volumeHeight) / maxDim;
-    float scaleZ = static_cast<float>(volumeDepth) / maxDim;
-
     // Cube is now centered at origin
     glm::vec3 c(0.0f, 0.0f, 0.0f);
 
@@ -478,22 +512,124 @@ void Renderer::adjustBrightness(float v)
 }
 
 // =====================================
+// LOAD DATASET
+// =====================================
+bool Renderer::loadDataset(const std::string& name) {
+    std::string rawPath = "data/" + name + ".raw";
+    std::string metaPath = "data/" + name + ".txt";
+
+    std::cout << "[Renderer] loadDataset: " << name << std::endl;
+    std::cout << "  rawPath: " << rawPath << std::endl;
+    std::cout << "  metaPath: " << metaPath << std::endl;
+
+    // Verificar existência
+    std::ifstream meta(metaPath);
+    if (!meta) {
+        std::cerr << "[Renderer] Meta file not found: " << metaPath << std::endl;
+        return false;
+    }
+    std::ifstream raw(rawPath, std::ios::binary);
+    if (!raw) {
+        std::cerr << "[Renderer] RAW file not found: " << rawPath << std::endl;
+        return false;
+    }
+
+    // Ler dimensões
+    // META FORMAT: "width height depth spacingW spacingH spacingD" (mm)
+    int W, H, D;
+    float spacingW = 1.0f, spacingH = 1.0f, spacingD = 1.0f;
+    meta >> W >> H >> D;
+    if (!(meta >> spacingW >> spacingH >> spacingD)) {
+        spacingW = spacingH = spacingD = 1.0f;
+        std::cout << "[Renderer] Meta sem espaçamento físico; a assumir voxels cúbicos" << std::endl;
+    }
+    if (W <= 0 || H <= 0 || D <= 0) {
+        std::cerr << "[Renderer] Invalid dimensions in " << metaPath << std::endl;
+        return false;
+    }
+
+    // Carregar dados
+    Volume vol;
+    vol.width = W;
+    vol.height = H;
+    vol.depth = D;
+    vol.data.resize(W * H * D);
+    raw.read(reinterpret_cast<char*>(vol.data.data()), vol.data.size() * sizeof(float));
+    if (!raw) {
+        std::cerr << "[Renderer] Failed to read RAW data from " << rawPath << std::endl;
+        return false;
+    }
+
+    // Validar dados (básico)
+    float minV = 1e9f, maxV = -1e9f;
+    for (size_t i = 0; i < vol.data.size(); i++) {
+        float v = vol.data[i];
+        if (std::isnan(v) || std::isinf(v)) {
+            std::cerr << "[Renderer] NaN/INF detected in volume data" << std::endl;
+            return false;
+        }
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+    }
+    std::cout << "[Renderer] Volume stats - Min: " << minV << ", Max: " << maxV << std::endl;
+
+    // Substituir textura existente (se houver)
+    if (volumeTex != 0) {
+        glDeleteTextures(1, &volumeTex);
+        volumeTex = 0;
+    }
+
+    // Criar nova textura
+    glGenTextures(1, &volumeTex);
+    glBindTexture(GL_TEXTURE_3D, volumeTex);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_R32F, vol.width, vol.height, vol.depth, 0, GL_RED, GL_FLOAT, vol.data.data());
+
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        std::cerr << "[Renderer] OpenGL error uploading texture: " << err << std::endl;
+        return false;
+    }
+
+    volumeWidth = vol.width;
+    volumeHeight = vol.height;
+    volumeDepth = vol.depth;
+    voxelSpacingX = spacingW;
+    voxelSpacingY = spacingH;
+    voxelSpacingZ = spacingD;
+
+    // Reconstruir o cubo com as novas dimensões
+    initCube();
+
+    std::cout << "[Renderer] Loaded dataset: " << name << " (" << W << "x" << H << "x" << D << ")" << std::endl;
+    return true;
+}
+
+// =====================================
 // RENDER
 // =====================================
 void Renderer::render() {
+    // Se não houver volume carregado, não renderizar
+    if (volumeTex == 0 || volumeWidth == 0) {
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        return;
+    }
+
     // Debug output (toggle com 'd')
     if (debugEnabled) {
         std::cout << "=== DEBUG ===" << std::endl;
         std::cout << "Volume: " << volumeWidth << "x" << volumeHeight << "x" << volumeDepth << std::endl;
-       
-        float maxDim = static_cast<float>(
-            volumeWidth > volumeHeight ? volumeWidth : volumeHeight
-        );
-        maxDim = maxDim > volumeDepth ? maxDim : static_cast<float>(volumeDepth);
-        float scaleX = static_cast<float>(volumeWidth) / maxDim;
-        float scaleY = static_cast<float>(volumeHeight) / maxDim;
-        float scaleZ = static_cast<float>(volumeDepth) / maxDim;
-       
+        std::cout << "Spacing (mm): " << voxelSpacingX << "x" << voxelSpacingY << "x" << voxelSpacingZ << std::endl;
+
+        glm::vec3 scale = computeCubeScale();
+        float scaleX = scale.x;
+        float scaleY = scale.y;
+        float scaleZ = scale.z;
+
         std::cout << "Cube scale: " << scaleX << "x" << scaleY << "x" << scaleZ << std::endl;
         std::cout << "Cube range: [-" << scaleX/2.0f << "," << scaleX/2.0f << "] x "
                   << "[-" << scaleY/2.0f << "," << scaleY/2.0f << "] x "
@@ -512,14 +648,11 @@ void Renderer::render() {
     glm::mat4 proj = getProj();
     glm::mat4 mvp = proj * view * model;
 
-    // Calcular escala para centered do cubo
-    float maxDim = static_cast<float>(
-        volumeWidth > volumeHeight ? volumeWidth : volumeHeight
-    );
-    maxDim = maxDim > volumeDepth ? maxDim : static_cast<float>(volumeDepth);
-    float scaleX = static_cast<float>(volumeWidth) / maxDim;
-    float scaleY = static_cast<float>(volumeHeight) / maxDim;
-    float scaleZ = static_cast<float>(volumeDepth) / maxDim;
+    // Calcular escala física (real, mm) para centered do cubo
+    glm::vec3 cubeScale = computeCubeScale();
+    float scaleX = cubeScale.x;
+    float scaleY = cubeScale.y;
+    float scaleZ = cubeScale.z;
 
     // -----------------------------
     // 1. DRAW VOLUME (RAYCAST)

@@ -9,17 +9,25 @@ GLAD_DIR    := $(OPENGL_DIR)/glad
 GLFW_DIR    := $(OPENGL_DIR)/glfw
 GLM_DIR     := $(OPENGL_DIR)/glm
 
+# Dear ImGui
+IMGUI_DIR   := external/imgui-1.92.8
+IMGUI_SRC   := $(wildcard $(IMGUI_DIR)/*.cpp) \
+               $(IMGUI_DIR)/backends/imgui_impl_glfw.cpp \
+               $(IMGUI_DIR)/backends/imgui_impl_opengl3.cpp
+
 # Compilador MinGW (cria .exe)
 CXX         := x86_64-w64-mingw32-g++
 CXXFLAGS    := -g -Wall -static-libgcc -static-libstdc++ \
                -I$(GLFW_DIR)/include \
                -I$(GLM_DIR)/include \
-               -I$(GLAD_DIR)/include
+               -I$(GLAD_DIR)/include \
+               -I$(IMGUI_DIR) \
+               -I$(IMGUI_DIR)/backends
 
 LDFLAGS     := -L$(GLFW_DIR)/lib-mingw-w64 \
                -lglfw3dll -lopengl32 -lgdi32
 
-SRC := $(wildcard $(SRC_DIR)/*.cpp) $(GLAD_DIR)/src/glad.c
+SRC := $(wildcard $(SRC_DIR)/*.cpp) $(GLAD_DIR)/src/glad.c $(IMGUI_SRC)
 OUT := $(BIN_DIR)/$(TARGET)
 
 all: $(OUT)
@@ -33,5 +41,9 @@ $(BIN_DIR):
 
 clean:
 	rm -rf $(BIN_DIR)
+	rm -f data/*.raw data/*.txt
+
+run: $(OUT)
+	cmd.exe /c $(OUT)
 
 .PHONY: all clean

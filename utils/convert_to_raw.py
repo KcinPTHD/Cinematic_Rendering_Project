@@ -1,258 +1,141 @@
 import os
-import sys
 import pydicom
 import numpy as np
+import argparse
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# ============================================================
-# USAGE
-# ============================================================
-# python convert_to_raw.py              → Uses default WDH orientation
-# python convert_to_raw.py --auto-detect → Auto-detects best orientation
-# ============================================================
-
-# ============================================================
-# AUTO-ORIENTATION DETECTION
-# ============================================================
-
-def parse_dicom_orientation(dicom_file):
-    """
-    Parse ImageOrientationPatient from DICOM to determine axis ordering.
-    Returns orientation string (WHD, WDH, HWD, DHW) or None if not available.
-    """
-    try:
-        orientation = dicom_file.get('ImageOrientationPatient', None)
-        if orientation is None:
-            return None
-        
-        # ImageOrientationPatient: [X_row, Y_row, Z_row, X_col, Y_col, Z_col]
-        # direction cosines for row and column axes
-        
-        # Standard medical orientation (most common):
-        # (1,0,0,0,1,0) = standard axial (X-row, Y-col) → WHD
-        # We'd need to check multiple DICOM files to establish a pattern
-        
-        print(f"[DEBUG] ImageOrientationPatient: {orientation}")
-        
-        # Standard axial (head scans) uses (1,0,0,0,1,0) or close to it
-        if abs(orientation[0] - 1.0) < 0.1 and abs(orientation[4] - 1.0) < 0.1:
-            return "WDH"  # Standard axial
-        
-        return None
-    except Exception as e:
-        print(f"[DEBUG] Could not parse orientation: {e}")
-        return None
-
-
-def bilateral_symmetry(volume, axis):
-    """
-    Calculate bilateral symmetry correlation along a given axis.
-    Returns correlation coefficient [-1, 1]. Higher = more symmetric.
-    """
-    try:
-        mid = volume.shape[axis] // 2
-        left = np.take(volume, range(mid), axis=axis)
-        right = np.take(volume, range(mid, min(2*mid, volume.shape[axis])), axis=axis)
-        
-        # Align shapes if needed
-        min_len = min(left.shape[axis], right.shape[axis])
-        left = np.take(left, range(min_len), axis=axis)
-        right = np.take(right, range(min_len), axis=axis)
-        right_flipped = np.flip(right, axis=axis)
-        
-        # Flatten and compute correlation
-        left_flat = left.flatten()
-        right_flat = right_flipped.flatten()
-        
-        if len(left_flat) > 0 and np.std(left_flat) > 0 and np.std(right_flat) > 0:
-            correlation = np.corrcoef(left_flat, right_flat)[0, 1]
-            if np.isnan(correlation):
-                return -1.0
-            return correlation
-        return -1.0
-    except Exception as e:
-        print(f"[DEBUG] Symmetry calculation failed for axis {axis}: {e}")
-        return -1.0
-
-
-def detect_best_orientation(volume):
-    """
-    Detect best orientation by testing bilateral symmetry on all 3 axes.
-    Returns orientation string (WHD, WDH, HWD, DHW).
-    """
-    symmetries = {}
-    
-    # Map axes to potential orientations
-    # The axis with highest symmetry is likely the left-right axis
-    # For head scans: typically width or height is left-right
-    
-    for axis in range(3):
-        sym = bilateral_symmetry(volume, axis)
-        symmetries[axis] = sym
-        print(f"[DEBUG] Axis {axis} bilateral symmetry: {sym:.4f}")
-    
-    # Find axis with highest symmetry
-    best_axis = max(symmetries, key=symmetries.get)
-    best_sym = symmetries[best_axis]
-    
-    print(f"[INFO] Best symmetric axis: {best_axis} (score: {best_sym:.4f})")
-    
-    # Map axis to likely orientation
-    # (This is a heuristic; can be refined with more datasets)
-    if best_sym > 0.3:  # Threshold for "symmetric enough"
-        if best_axis == 0:
-            return "WDH"  # Width axis is symmetric (left-right)
-        elif best_axis == 1:
-            return "WHD"  # Height axis is symmetric (left-right)
-        else:
-            return "WDH"  # Default if depth is symmetric
-    
-    return "WDH"  # Final fallback
-
-
-def auto_detect_orientation(slices_list):
-    """
-    Auto-detect orientation from DICOM slices.
-    Strategy:
-    1. Check DICOM metadata (ImageOrientationPatient)
-    2. Fall back to bilateral symmetry detection
-    3. Default to WDH
-    Returns orientation string.
-    """
-    print("[INFO] Auto-detecting orientation...")
-    
-    # Try metadata first
-    if len(slices_list) > 0:
-        metadata_result = parse_dicom_orientation(slices_list[0])
-        if metadata_result:
-            print(f"[OK] Detected from metadata: {metadata_result}")
-            return metadata_result
-    
-    # Build test volume for symmetry analysis
-    h, w = slices_list[0].pixel_array.shape
-    d = len(slices_list)
-    
-    print(f"[INFO] Building test volume ({w}x{h}x{d}) for symmetry analysis...")
-    test_volume = np.zeros((d, h, w), dtype=np.float32)
-    
-    for i, s in enumerate(slices_list):
-        img = s.pixel_array.astype(np.float32)
-        if hasattr(s, "RescaleSlope") and hasattr(s, "RescaleIntercept"):
-            img = img * s.RescaleSlope + s.RescaleIntercept
-        test_volume[i] = img
-    
-    # Normalize for analysis
-    test_volume -= test_volume.min()
-    vol_max = test_volume.max()
-    if vol_max > 0:
-        test_volume /= vol_max
-    
-    # Transpose to (width, height, depth) for analysis
-    test_volume = np.transpose(test_volume, (2, 1, 0))
-    
-    # Detect based on symmetry
-    result = detect_best_orientation(test_volume)
-    print(f"[OK] Detected from bilateral symmetry: {result}")
-    
-    return result
 
 
 # ============================================================
 # MAIN PROCESSING
 # ============================================================
+#
+# NOTA SOBRE EIXOS / ORIENTAÇÃO (lê isto antes de tocar no transpose!)
+#
+# O array "volume" é construído com shape (d, h, w):
+#   d = número de slices (eixo craniocaudal do corpo, cabeça-pés)
+#   h = altura de cada imagem (pixel_array.shape[0])
+#   w = largura de cada imagem (pixel_array.shape[1])
+#
+# O numpy guarda arrays em C-order: o ÚLTIMO eixo da shape é o que varia
+# mais rápido na memória. O glTexImage3D(width, height, depth, ...) do
+# OpenGL espera precisamente o oposto: "width" deve ser o eixo mais
+# rápido na memória, "depth" o mais lento.
+#
+# Por isso fazemos transpose para (h, d, w):
+#   - w (mais rápido)  -> corresponde a glTexImage3D width
+#   - d (eixo do meio) -> corresponde a glTexImage3D height
+#   - h (mais lento)   -> corresponde a glTexImage3D depth
+#
+# Como bónus, isto faz com que o eixo do corpo (d, nº de slices) seja
+# mapeado para a altura (Y) no ecrã, que é o que se quer ao visualizar
+# um torso "de pé". Se um dia precisares de outra orientação, NÃO
+# inventes outro transpose ad-hoc — ajusta antes a câmara/yaw/pitch no
+# renderer, ou mantém este transpose fixo e gira o objeto no C++.
+#
+# O ficheiro .txt é escrito exatamente na ordem (w, d, h), que é a
+# mesma ordem que o renderer.cpp passa ao glTexImage3D(width,height,depth).
 
-folder = os.path.join(BASE, "data", "ct")
-output = os.path.join(BASE, "data", "ct.raw")
+def main():
+    parser = argparse.ArgumentParser(description='Convert DICOM to RAW volume.')
+    parser.add_argument('--input-dir', type=str, default='data/ct',
+                        help='Directory containing DICOM files (default: data/ct)')
+    parser.add_argument('--output-prefix', type=str, default='data/ct',
+                        help='Output file prefix (e.g., data/ct -> data/ct.raw and data/ct.txt)')
+    args = parser.parse_args()
 
-slices = []
+    folder = os.path.join(BASE, args.input_dir)
+    output_raw = args.output_prefix + '.raw'
+    output_meta = args.output_prefix + '.txt'
 
-# carregar todos os dcm
-for file in os.listdir(folder):
-    if file.endswith(".dcm"):
-        path = os.path.join(folder, file)
-        dcm = pydicom.dcmread(path)
-        slices.append(dcm)
+    slices = []
 
-# ORDENAR (crucial!)
-slices.sort(key=lambda s: int(s.InstanceNumber))
+    for file in os.listdir(folder):
+        if file.endswith(".dcm"):
+            path = os.path.join(folder, file)
+            dcm = pydicom.dcmread(path)
+            slices.append(dcm)
 
-print(f"[INFO] Loaded {len(slices)} DICOM files")
+    slices.sort(key=lambda s: int(s.InstanceNumber))
 
-# Check DICOM orientation (for debugging)
-first_slice = slices[0]
-print(f"[DEBUG] First slice orientation: {first_slice.get('PatientOrientation', 'N/A')}")
-print(f"[DEBUG] Slice location: {first_slice.get('SliceLocation', 'N/A')}")
+    print(f"[INFO] Loaded {len(slices)} DICOM files")
 
-# dimensões
-h, w = slices[0].pixel_array.shape
-d = len(slices)
+    h, w = slices[0].pixel_array.shape
+    d = len(slices)
 
-print(f"[INFO] Slice dimensions: {w}x{h}, Total slices: {d}")
+    print(f"[INFO] Slice dimensions: {w}x{h}, Total slices: {d}")
 
-volume = np.zeros((d, h, w), dtype=np.float32)
+    # -----------------------------
+    # PHYSICAL VOXEL SPACING (mm)
+    # -----------------------------
+    # Os voxels quase nunca são cúbicos num scan real: o espaçamento
+    # entre pixels dentro de um corte (PixelSpacing) é normalmente muito
+    # mais fino do que a espessura do corte (SliceThickness). Se
+    # ignorarmos isto e escalarmos só pela CONTAGEM de voxels (ex.
+    # 512x512x150), um scan de tórax fica "esmagado" no eixo dos cortes,
+    # porque 150 cortes de 4mm cobrem muito menos distância proporcional
+    # do que 512 pixels de 0.7mm.
+    #
+    # PixelSpacing (DICOM) = [row_spacing, col_spacing] em mm:
+    #   row_spacing -> espaçamento ao longo do eixo "h" (linhas)
+    #   col_spacing -> espaçamento ao longo do eixo "w" (colunas)
+    ref = slices[0]
+    pixel_spacing = getattr(ref, "PixelSpacing", [1.0, 1.0])
+    row_spacing = float(pixel_spacing[0])  # eixo h
+    col_spacing = float(pixel_spacing[1])  # eixo w
 
-for i, s in enumerate(slices):
-    img = s.pixel_array.astype(np.float32)
+    # Espessura/espaçamento entre cortes -> eixo "d"
+    if hasattr(ref, "SpacingBetweenSlices"):
+        slice_spacing = float(ref.SpacingBetweenSlices)
+    elif hasattr(ref, "SliceThickness"):
+        slice_spacing = float(ref.SliceThickness)
+    else:
+        slice_spacing = 1.0
 
-    # CT → Hounsfield normalization (opcional mas recomendado)
-    if hasattr(s, "RescaleSlope") and hasattr(s, "RescaleIntercept"):
-        img = img * s.RescaleSlope + s.RescaleIntercept
+    print(f"[INFO] Voxel spacing (mm) -> w:{col_spacing} d:{slice_spacing} h:{row_spacing}")
 
-    volume[i] = img
+    volume = np.zeros((d, h, w), dtype=np.float32)
 
-print(f"[DEBUG] Before normalization - Min: {volume.min()}, Max: {volume.max()}, Mean: {volume.mean()}")
+    for i, s in enumerate(slices):
+        img = s.pixel_array.astype(np.float32)
 
-# NORMALIZAR 0..1
-volume -= volume.min()
-vol_max = volume.max()
-if vol_max > 0:
-    volume /= vol_max
+        if hasattr(s, "RescaleSlope") and hasattr(s, "RescaleIntercept"):
+            img = img * s.RescaleSlope + s.RescaleIntercept
 
-print(f"[DEBUG] After normalization - Min: {volume.min()}, Max: {volume.max()}, Mean: {volume.mean()}")
+        volume[i] = img
 
-# AUTO-DETECT ORIENTATION if requested
-auto_detect = "--auto-detect" in sys.argv
-if auto_detect:
-    orientation = auto_detect_orientation(slices)
-    print(f"[INFO] Using auto-detected orientation: {orientation}")
-else:
-    orientation = "WDH"  # Default
-    print(f"[INFO] Using default orientation: {orientation}")
+    print(f"[DEBUG] Before normalization - Min: {volume.min()}, Max: {volume.max()}, Mean: {volume.mean()}")
 
-# Reorder to OpenGL (X,Y,Z) based on detected orientation
-# volume is currently (D, H, W) from stacking slices
-# We need to transpose based on orientation
+    volume -= volume.min()
+    vol_max = volume.max()
+    if vol_max > 0:
+        volume /= vol_max
 
-if orientation == "WDH":
-    # width, depth, height → (2, 0, 1)
-    volume = np.transpose(volume, (2, 0, 1))
-elif orientation == "WHD":
-    # width, height, depth → (2, 1, 0)
-    volume = np.transpose(volume, (2, 1, 0))
-elif orientation == "HWD":
-    # height, width, depth → (1, 2, 0)
-    volume = np.transpose(volume, (1, 2, 0))
-elif orientation == "DHW":
-    # depth, height, width → (0, 1, 2)
-    volume = np.transpose(volume, (0, 1, 2))
-else:
-    # Fallback to WDH
-    volume = np.transpose(volume, (2, 0, 1))
-    orientation = "WDH"
+    print(f"[DEBUG] After normalization - Min: {volume.min()}, Max: {volume.max()}, Mean: {volume.mean()}")
 
-print(f"[INFO] Final volume shape (X,Y,Z): {volume.shape}")
+    # Transpose fixo (d,h,w) -> (h,d,w). Ver explicação grande no topo do
+    # ficheiro. w fica o eixo mais rápido na memória (-> GL width),
+    # d o eixo do meio (-> GL height), h o mais lento (-> GL depth).
+    volume = np.transpose(volume, (1, 0, 2))
 
-volume.tofile(output)
+    print(f"[INFO] Final array shape (H,D,W) in memory: {volume.shape}")
+    print(f"[INFO] GL texture dims -> width(w)={w} height(d)={d} depth(h)={h}")
 
-print(f"[OK] Saved RAW: {output}")
-print(f"[OK] Size: {volume.nbytes / (1024*1024):.2f} MB")
-print(f"[OK] Orientation: {orientation}")
+    volume.tofile(output_raw)
 
-meta_path = os.path.join(os.path.dirname(output), "ct.txt")
+    print(f"[OK] Saved RAW: {output_raw}")
+    print(f"[OK] Size: {volume.nbytes / (1024*1024):.2f} MB")
 
-with open(meta_path, "w") as f:
-    f.write(f"{volume.shape[0]} {volume.shape[1]} {volume.shape[2]}")
+    # Gravado na ordem (w, d, h) para as contagens de voxels, seguido do
+    # espaçamento físico em mm na MESMA ordem de eixos (w, d, h). O
+    # renderer usa contagem*espaçamento para calcular o tamanho físico
+    # real de cada eixo, em vez de assumir voxels cúbicos.
+    with open(output_meta, "w") as f:
+        f.write(f"{w} {d} {h} {col_spacing} {slice_spacing} {row_spacing}")
 
-print(f"[OK] Saved META: {meta_path}")
-print(f"[OK] Format: Width({volume.shape[0]}) Depth({volume.shape[1]}) Height({volume.shape[2]})")
+    print(f"[OK] Saved META: {output_meta}")
+    print(f"[OK] GL dims order in .txt -> width({w}) height({d}) depth({h})")
+    print(f"[OK] Spacing order in .txt -> width({col_spacing}) height({slice_spacing}) depth({row_spacing}) mm")
+
+if __name__ == "__main__":
+    main()
