@@ -4,3 +4,4 @@ data/
 debug.txt
 debug_volume.txt
 imgui.ini
+.vscode/
