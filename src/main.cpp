@@ -12,48 +12,15 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <algorithm>
 
 int width = 800, height = 600;
 
 Renderer* renderer;
 
-bool mousePressed = false;
-double lastX = 0.0, lastY = 0.0;
-
-// ============================================================
-// CALLBACKS DO MOUSE (drag) – com verificação do ImGui
-// ============================================================
-void mouse_button(GLFWwindow* window, int button, int action, int mods) {
-    if (button == GLFW_MOUSE_BUTTON_LEFT) {
-        if (!ImGui::GetIO().WantCaptureMouse) {
-            mousePressed = (action == GLFW_PRESS);
-            if (mousePressed) {
-                glfwGetCursorPos(window, &lastX, &lastY);
-            }
-        } else {
-            mousePressed = false;
-        }
-    }
-}
-
-void cursor_pos(GLFWwindow* window, double xpos, double ypos) {
-    if (!mousePressed) return;
-    if (ImGui::GetIO().WantCaptureMouse) return;
-
-    float dx = static_cast<float>(xpos - lastX);
-    float dy = static_cast<float>(ypos - lastY);
-
-    lastX = xpos;
-    lastY = ypos;
-
-    renderer->onMouseDrag(dx, dy);
-}
-
-void scroll(GLFWwindow* window, double xoffset, double yoffset) {
-    if (!ImGui::GetIO().WantCaptureMouse) {
-        renderer->onZoom(static_cast<float>(yoffset));
-    }
-}
+bool isFullscreen = false;
+int windowedPosX = 0, windowedPosY = 0;
+int windowedWidth = 800, windowedHeight = 600;
 
 void framebuffer_size(GLFWwindow* window, int w, int h) {
     glViewport(0, 0, w, h);
@@ -83,90 +50,189 @@ int main() {
     (void)io;
     ImGui::StyleColorsDark();
 
+    // ImGui_ImplGlfw_InitForOpenGL already installs its own mouse callbacks
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
-    glfwSetMouseButtonCallback(window, mouse_button);
-    glfwSetCursorPosCallback(window, cursor_pos);
-    glfwSetScrollCallback(window, scroll);
+    // Do NOT call glfwSetMouseButtonCallback / glfwSetCursorPosCallback / glfwSetScrollCallback
+    // as they would replace ImGui's callbacks and break mouse input in ImGui.
+    // Instead, we poll mouse state each frame (see below).
+
     glfwSetFramebufferSizeCallback(window, framebuffer_size);
 
     DatasetManager datasetManager;
     bool datasetLoaded = false;
     std::string currentDataset = "";
-    int selectedIndex = 0;
 
-    // Estado da conversão assíncrona
     std::atomic<bool> converting{false};
     std::atomic<bool> conversionSuccess{false};
     std::string convertingDatasetName;
     std::thread conversionThread;
     bool conversionFinished = false;
 
+    // Popup states
+    bool showHelp = false;
+    bool showExitConfirm = false;
+
     while (!glfwWindowShouldClose(window)) {
+        // Scale font with window width
+        float baseWidth = 1200.0f;
+        float scale = std::max(0.7f, std::min(2.0f, io.DisplaySize.x / baseWidth));
+        io.FontGlobalScale = scale;
+
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        // Verificar se a thread de conversão terminou
-        if (converting && conversionThread.joinable()) {
-            // Verificar se a thread já terminou (joinable é false após join)
-            // Como usamos detach, não podemos dar join. Melhor usar uma flag.
-            // Vamos usar uma flag definida pela thread.
-        }
-
-        if (!datasetLoaded) {
-            auto datasets = datasetManager.getDatasets();
-
-            // Navegação por teclado (apenas se não estiver a converter)
-            if (!converting) {
-                if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) && !datasets.empty()) {
-                    selectedIndex = (selectedIndex + 1) % datasets.size();
-                }
-                if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && !datasets.empty()) {
-                    selectedIndex = (selectedIndex - 1 + datasets.size()) % datasets.size();
-                }
-
-                if (ImGui::IsKeyPressed(ImGuiKey_Enter) && !datasets.empty()) {
-                    const auto& ds = datasets[selectedIndex];
-                    if (!ds.isReady) {
-                        // Iniciar conversão em thread separada
-                        converting = true;
-                        conversionSuccess = false;
-                        convertingDatasetName = ds.name;
-                        conversionFinished = false;
-
-                        conversionThread = std::thread([&datasetManager, ds, &converting, &conversionSuccess, &conversionFinished]() {
-                            bool success = datasetManager.convertDataset(ds.name);
-                            if (success) {
-                                datasetManager.scanDatasets();
-                            }
-                            conversionSuccess = success;
-                            converting = false;
-                            conversionFinished = true;
-                        });
-                        conversionThread.detach();
-                    } else {
-                        // Dataset já pronto, carregar diretamente
-                        bool success = renderer->loadDataset(ds.name);
-                        if (success) {
-                            currentDataset = ds.name;
-                            datasetLoaded = true;
-                            std::cout << "[INFO] Dataset '" << ds.name << "' carregado com sucesso!" << std::endl;
-                        } else {
-                            std::cerr << "[ERROR] Falha ao carregar dataset '" << ds.name << "'" << std::endl;
-                            ImGui::OpenPopup("Erro ao carregar");
-                        }
-                    }
+        // ============================================================
+        // POLL MOUSE FOR 3D VIEW (only when ImGui doesn't capture it)
+        // ============================================================
+        if (!io.WantCaptureMouse) {
+            // Mouse drag (left button)
+            if (io.MouseDown[0]) {
+                float dx = io.MouseDelta.x;
+                float dy = io.MouseDelta.y;
+                if (dx != 0.0f || dy != 0.0f) {
+                    renderer->onMouseDrag(dx, dy);
                 }
             }
 
-            // Calcular tamanho da janela com base no tamanho da tela
+            // Mouse wheel zoom
+            if (io.MouseWheel != 0.0f) {
+                renderer->onZoom(io.MouseWheel);
+            }
+        }
+
+        // ============================================================
+        // 1. GLOBAL KEYBOARD SHORTCUTS (F11, ESC, H)
+        // ============================================================
+        if (ImGui::IsKeyPressed(ImGuiKey_F11)) {
+            isFullscreen = !isFullscreen;
+            if (isFullscreen) {
+                glfwGetWindowPos(window, &windowedPosX, &windowedPosY);
+                glfwGetWindowSize(window, &windowedWidth, &windowedHeight);
+                GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+                const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+                glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+            } else {
+                glfwSetWindowMonitor(window, nullptr, windowedPosX, windowedPosY, windowedWidth, windowedHeight, 0);
+            }
+        }
+
+        // ESC: if in visualization, go back to menu; if in menu, ask to quit
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            if (datasetLoaded) {
+                datasetLoaded = false;
+            } else {
+                if (!ImGui::IsPopupOpen("Exit?")) {
+                    showExitConfirm = true;
+                    ImGui::OpenPopup("Exit?");
+                }
+            }
+        }
+
+        // H: open help popup (only if not already open)
+        if (ImGui::IsKeyPressed(ImGuiKey_H)) {
+            if (!ImGui::IsPopupOpen("Help") && !showHelp) {
+                showHelp = true;
+                ImGui::OpenPopup("Help");
+            }
+        }
+
+        // ============================================================
+        // 2. HELP POPUP
+        // ============================================================
+        if (showHelp) {
+            ImGui::SetNextWindowSizeConstraints(ImVec2(400, 300), ImVec2(600, 500));
+            if (ImGui::BeginPopupModal("Help", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("CONTROLS:");
+                ImGui::BulletText("D - Toggle debug console");
+                ImGui::BulletText("F - Toggle wireframe");
+                ImGui::BulletText("Q/W - Decrease/Increase threshold (Shift: fine)");
+                ImGui::BulletText("A/S - Decrease/Increase density (Shift: fine)");
+                ImGui::BulletText("Z/X - Decrease/Increase brightness");
+                ImGui::BulletText("H - Show this help");
+                ImGui::BulletText("F11 - Toggle fullscreen");
+                ImGui::BulletText("ESC - Return to menu (visualization) or quit (menu)");
+                ImGui::BulletText("Mouse: Drag to rotate / Scroll to zoom");
+                ImGui::Separator();
+                ImGui::Text("Press ENTER or click Close.");
+                if (ImGui::Button("Close") || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+                    showHelp = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            } else {
+                showHelp = false;
+            }
+        }
+
+        // ============================================================
+        // 3. EXIT CONFIRMATION POPUP
+        // ============================================================
+        if (showExitConfirm) {
+            ImGui::SetNextWindowSizeConstraints(ImVec2(300, 100), ImVec2(500, 200));
+            if (ImGui::BeginPopupModal("Exit?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Are you sure you want to exit?");
+                ImGui::Separator();
+                if (ImGui::Button("Yes") || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+                    showExitConfirm = false;
+                    ImGui::CloseCurrentPopup();
+                    glfwSetWindowShouldClose(window, GLFW_TRUE);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("No")) {
+                    showExitConfirm = false;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndPopup();
+            } else {
+                showExitConfirm = false;
+            }
+        }
+
+        // ============================================================
+        // 4. MAIN MENU (if no dataset loaded)
+        // ============================================================
+        if (!datasetLoaded) {
+            auto datasets = datasetManager.getDatasets();
+
+            // Helper lambda to trigger load/convert
+            auto activateDataset = [&](const DatasetManager::Dataset& ds) {
+                if (!ds.isReady) {
+                    converting = true;
+                    conversionSuccess = false;
+                    convertingDatasetName = ds.name;
+                    conversionFinished = false;
+
+                    conversionThread = std::thread([&datasetManager, ds, &converting, &conversionSuccess, &conversionFinished]() {
+                        bool success = datasetManager.convertDataset(ds.name);
+                        if (success) {
+                            datasetManager.scanDatasets();
+                        }
+                        conversionSuccess = success;
+                        converting = false;
+                        conversionFinished = true;
+                    });
+                    conversionThread.detach();
+                } else {
+                    bool success = renderer->loadDataset(ds.name);
+                    if (success) {
+                        currentDataset = ds.name;
+                        datasetLoaded = true;
+                        std::cout << "[INFO] Dataset '" << ds.name << "' loaded successfully!" << std::endl;
+                    } else {
+                        std::cerr << "[ERROR] Failed to load dataset '" << ds.name << "'" << std::endl;
+                        ImGui::OpenPopup("Error loading");
+                    }
+                }
+            };
+
+            // Window sizing
             float winWidth = io.DisplaySize.x * 0.4f;
             float winHeight = io.DisplaySize.y * 0.5f;
             if (winWidth < 300) winWidth = 300;
             if (winHeight < 200) winHeight = 200;
-            // Limitar máximo a 80% da janela para não ocupar tudo
             float maxWinWidth = io.DisplaySize.x * 0.8f;
             float maxWinHeight = io.DisplaySize.y * 0.8f;
             if (winWidth > maxWinWidth) winWidth = maxWinWidth;
@@ -174,71 +240,77 @@ int main() {
 
             ImGui::SetNextWindowSize(ImVec2(winWidth, winHeight), ImGuiCond_Always);
             ImGui::SetNextWindowSizeConstraints(ImVec2(300, 100), ImVec2(maxWinWidth, maxWinHeight));
-            ImGui::Begin("Selecionar Dataset", nullptr,
+            ImGui::Begin("Select Dataset", nullptr,
                          ImGuiWindowFlags_NoCollapse);
 
+            ImGui::TextWrapped("Press H for help.");
+
             if (converting) {
-                // Mostrar animação de carregamento
                 static float timer = 0.0f;
                 timer += ImGui::GetIO().DeltaTime;
                 int dots = (int)(timer * 2.0f) % 4;
-                std::string msg = "A converter" + std::string(dots, '.') + std::string(3 - dots, ' ');
+                std::string msg = "Converting" + std::string(dots, '.') + std::string(3 - dots, ' ');
                 ImGui::TextWrapped("%s", msg.c_str());
-                ImGui::TextWrapped("Aguarde...");
-                // Impedir interação
+                ImGui::TextWrapped("Please wait...");
                 ImGui::BeginDisabled();
-                ImGui::Button("Converter");
+                ImGui::Button("Convert");
                 ImGui::EndDisabled();
             } else {
-                // Verificar se a conversão terminou e processar resultado
                 if (conversionFinished) {
                     conversionFinished = false;
                     if (conversionSuccess) {
-                        // Recarregar datasets para atualizar estado
                         auto updatedDatasets = datasetManager.getDatasets();
-                        // Procurar o dataset convertido
                         for (const auto& ds : updatedDatasets) {
                             if (ds.name == convertingDatasetName && ds.isReady) {
                                 bool success = renderer->loadDataset(ds.name);
                                 if (success) {
                                     currentDataset = ds.name;
                                     datasetLoaded = true;
-                                    std::cout << "[INFO] Dataset '" << ds.name << "' carregado com sucesso!" << std::endl;
+                                    std::cout << "[INFO] Dataset '" << ds.name << "' loaded successfully!" << std::endl;
                                 } else {
-                                    std::cerr << "[ERROR] Falha ao carregar dataset '" << ds.name << "'" << std::endl;
-                                    ImGui::OpenPopup("Erro ao carregar");
+                                    std::cerr << "[ERROR] Failed to load dataset '" << ds.name << "'" << std::endl;
+                                    ImGui::OpenPopup("Error loading");
                                 }
                                 break;
                             }
                         }
                     } else {
-                        std::cerr << "[ERROR] Falha na conversão do dataset '" << convertingDatasetName << "'" << std::endl;
-                        ImGui::OpenPopup("Erro ao carregar");
+                        std::cerr << "[ERROR] Conversion failed for dataset '" << convertingDatasetName << "'" << std::endl;
+                        ImGui::OpenPopup("Error loading");
                     }
                     convertingDatasetName = "";
                 }
 
                 if (datasets.empty()) {
-                    ImGui::TextWrapped("Nenhum dataset encontrado em data/");
-                    ImGui::TextWrapped("Coloque pastas com ficheiros .dcm em data/");
+                    ImGui::TextWrapped("No datasets found in data/");
+                    ImGui::TextWrapped("Place folders with .dcm files in data/");
                 } else {
+                    ImGui::TextWrapped("Click a dataset below to load it (or convert it first).");
+                    ImGui::Spacing();
                     for (size_t i = 0; i < datasets.size(); ++i) {
                         const auto& ds = datasets[i];
-                        std::string label = ds.name + (ds.isReady ? " (pronto)" : " (converter)");
-                        if ((int)i == selectedIndex) {
-                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "> %s", label.c_str());
-                        } else {
-                            ImGui::Text("  %s", label.c_str());
+                        std::string label = ds.name + (ds.isReady ? " (ready)" : " (needs conversion)");
+
+                        ImGui::PushID((int)i);
+                        if (!ds.isReady) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.3f, 1.0f));
                         }
+                        if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_None)) {
+                            activateDataset(ds);
+                        }
+                        if (!ds.isReady) {
+                            ImGui::PopStyleColor();
+                        }
+                        ImGui::PopID();
                     }
-                    ImGui::Text("\nUse setas UP DOWN para selecionar e ENTER para visualizar.");
                 }
             }
 
-            if (ImGui::BeginPopupModal("Erro ao carregar", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                ImGui::Text("Não foi possível carregar o dataset.");
-                ImGui::Text("Verifique se os ficheiros .raw e .txt existem.");
-                if (ImGui::Button("OK")) {
+            // Error popup (Enter closes it)
+            if (ImGui::BeginPopupModal("Error loading", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                ImGui::Text("Failed to load the dataset.");
+                ImGui::Text("Check if the .raw and .txt files exist.");
+                if (ImGui::Button("OK") || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
                     ImGui::CloseCurrentPopup();
                 }
                 ImGui::EndPopup();
@@ -247,6 +319,9 @@ int main() {
             ImGui::End();
         }
 
+        // ============================================================
+        // 5. RENDER 3D VIEW (if dataset loaded)
+        // ============================================================
         if (datasetLoaded) {
             if (ImGui::IsKeyPressed(ImGuiKey_D)) renderer->toggleDebug();
             if (ImGui::IsKeyPressed(ImGuiKey_F)) renderer->toggleWireframe();
@@ -281,9 +356,6 @@ int main() {
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
-
-    // Se a thread de conversão ainda estiver a correr, esperar (mas detach já libertou)
-    // Não precisamos de fazer join porque demos detach.
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

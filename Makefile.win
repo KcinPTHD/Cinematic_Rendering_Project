@@ -43,7 +43,4 @@ clean:
 	rm -rf $(BIN_DIR)
 	rm -f data/*.raw data/*.txt
 
-run: $(OUT)
-	cmd.exe /c $(OUT)
-
 .PHONY: all clean
